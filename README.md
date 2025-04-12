@@ -20,7 +20,7 @@ In the end we advocate for which version is better, which one has less bugs, ful
 ![](readmeIMGs/Pasted%20image%2020250412175725.png)
 
 ##### LLM Example usage
-![](readmeIMGs/LLMusage.png
+![](readmeIMGs/LLMusage.png)
 
 ---
 # How to run the extension
