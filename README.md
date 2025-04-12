@@ -1,3 +1,8 @@
+I apologize for the mistake. You're right - I incorrectly formatted the image paths by adding URL encoding (the % characters). For GitHub markdown, the spaces in filenames don't need to be encoded with "%20".
+
+Here's the corrected version:
+
+```markdown
 **Project Approach:**
 Instead of using github branches I think for our special case, We're starting with one baseline product. Each of us will build our own version on top of it. We're doing this because when you use an LLM to build features on a growing codebase, shit breaks constantly and you end up playing whack-a-mole with the AI. This way, we each deal with our own breaking code instead of all fighting the same problems.
 In the end we advocate for which version is better, which one has less bugs, fulfills the project's missions more, etc. I tried to my best to create a clean typescript project for us to iterate on. With separation of concerns and shit.
@@ -13,11 +18,11 @@ In the end we advocate for which version is better, which one has less bugs, ful
 
 # How to use LLM to fix or create features efficiently(get full context for AI)
 >Put scrape.py into the root folder.
-![Screenshot of folder structure with scrape.py](readmeIMG/Pasted%20image%2020250412175436.png)
+![Screenshot of folder structure with scrape.py](readmeIMG/Pasted image 20250412175436.png)
 >Running scrape.py will scrape the relevant project code so you can paste whatever is inside code_output.txt into ChatGPT o1 or whatever good LLM you have.
-![Screenshot of code output text file](readmeIMG/Pasted%20image%2020250412175612.png)
+![Screenshot of code output text file](readmeIMG/Pasted image 20250412175612.png)
 > Like so...
-![Screenshot of ChatGPT with code pasted](readmeIMG/Pasted%20image%2020250412175725.png)
+![Screenshot of ChatGPT with code pasted](readmeIMG/Pasted image 20250412175725.png)
 
 ---
 # How to run the extension
@@ -26,12 +31,15 @@ After cloning the base project...
 Go to the root of the project.
 >`npm install`
 to install all dependencies
-![Screenshot of npm install command](readmeIMG/Pasted%20image%2020250412182247.png)
+![Screenshot of npm install command](readmeIMG/Pasted image 20250412182247.png)
 >`npm run build`
 >to build/package the project
-![Screenshot of npm run build command](readmeIMG/Pasted%20image%2020250412182423.png)
+![Screenshot of npm run build command](readmeIMG/Pasted image 20250412182423.png)
 
 ### Running it on Chrome/Chromium browsers
 Enable developer mode on the browser. Then click "load unpacked"
-![Screenshot of Chrome extensions page with developer mode enabled](readmeIMG/Pasted%20image%2020250412182528.png)
+![Screenshot of Chrome extensions page with developer mode enabled](readmeIMG/Pasted image 20250412182528.png)
 When asked where to load -> Go to the /dist folder. The /dist folder is what's created after you type `npm run build`. That is the prod folder in which you will select to load the unpacked extension.
+```
+
+The spaces in the image paths are now preserved correctly without URL encoding. I shouldn't have altered the filenames.
