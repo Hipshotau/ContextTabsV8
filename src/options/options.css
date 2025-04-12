@@ -1,0 +1,93 @@
+/* Add these styles at an appropriate location in the CSS file */
+
+/* Parked Links Section */
+#parkedLinksSection {
+  margin-top: 30px;
+}
+
+.parked-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  background-color: #f5f5f5;
+  position: relative;
+}
+
+.parked-item:hover {
+  background-color: #e9e9e9;
+}
+
+.link-title {
+  flex: 2;
+  font-weight: 500;
+  text-decoration: none;
+  color: #0066cc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 10px;
+}
+
+.link-title:hover {
+  text-decoration: underline;
+}
+
+.link-context {
+  flex: 1;
+  color: #666;
+  font-size: 0.9em;
+  text-align: center;
+  max-width: 100px;
+}
+
+.link-date {
+  flex: 1;
+  color: #666;
+  font-size: 0.9em;
+  text-align: right;
+}
+
+.action-buttons {
+  margin-top: 15px;
+  display: flex;
+  gap: 10px;
+}
+
+.action-btn {
+  padding: 8px 15px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.action-btn.primary {
+  background-color: #0066cc;
+  color: white;
+}
+
+.action-btn.primary:hover {
+  background-color: #0055aa;
+}
+
+.action-btn.secondary {
+  background-color: #e0e0e0;
+  color: #333;
+}
+
+.action-btn.secondary:hover {
+  background-color: #d0d0d0;
+}
+
+.empty-state {
+  color: #666;
+  font-style: italic;
+  padding: 15px;
+  text-align: center;
+  background-color: #f9f9f9;
+  border-radius: 4px;
+  margin: 10px 0;
+} 
