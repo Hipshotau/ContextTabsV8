@@ -8,10 +8,13 @@ const DEFAULT_CONTEXT_KEYWORDS: Record<string, Record<string, number>> = {
     "colleague": 0.7, "manager": 0.7, "workflow": 0.8, "productivity": 0.7, "professional": 0.7
   },
   "Learning": {
-    "course": 0.9, "lesson": 0.8, "tutorial": 0.9, "learn": 0.8, "study": 0.9, 
-    "education": 0.7, "assignment": 0.9, "homework": 0.9, "university": 0.8, "college": 0.8,
-    "school": 0.7, "academy": 0.7, "lecture": 0.9, "professor": 0.8, "student": 0.7,
-    "quiz": 0.8, "exam": 0.9, "test": 0.7, "knowledge": 0.6, "textbook": 0.8
+  "course": 0.9, "lesson": 0.8, "tutorial": 0.9, "learn": 0.8, "study": 0.9,
+  "education": 0.7, "assignment": 0.9, "homework": 0.9, "university": 0.8, "college": 0.8,
+  "school": 0.7, "academy": 0.7, "lecture": 0.9, "professor": 0.8, "student": 0.7,
+  "quiz": 0.8, "exam": 0.9, "test": 0.7, "knowledge": 0.6, "textbook": 0.8,
+  "admissions": 0.9, "academics": 0.8, "majors": 0.8, "undergraduate": 0.9,
+  "graduate": 0.9, "faculty": 0.7, "syllabus": 0.8, "transcript": 0.7,
+  "campus": 0.6, "enroll": 0.9
   },
   "Entertainment": {
     "movie": 0.9, "show": 0.7, "stream": 0.7, "watch": 0.6, "video": 0.7,

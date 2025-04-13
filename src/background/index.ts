@@ -172,32 +172,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Required for async response
   }
   else if (request.type === "OVERRIDE_BLOCK") {
-    // Handle override request with more specific guidance
     (async () => {
       try {
-        // Get the tab that sent the request
-        const tabId = sender.tab?.id;
+        const tabId = request.tabId ?? sender.tab?.id;
         if (tabId) {
-          // Add this tab to the temporarily unblocked list
           recentlyUnblockedTabs.add(tabId);
-          
-          // Remove from allowlist after 5 seconds
           setTimeout(() => {
             recentlyUnblockedTabs.delete(tabId);
           }, 5000);
-          
-          // Return success
           sendResponse({ success: true });
         } else {
-          sendResponse({ success: true });
+          sendResponse({ success: false, error: "Tab ID missing" });
         }
       } catch (error) {
         console.error("Error handling override:", error);
-        sendResponse({ success: true }); // Still succeed to avoid blocking user
+        sendResponse({ success: false });
       }
     })();
     return true;
-  }
+  }  
   else if (request.type === "RESTORE_WORKSPACE") {
     const { name } = request.payload || {};
     focusEngine.restoreWorkspace(name)
@@ -357,15 +350,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Required for async response
   }
   else if (request.type === "CONTEXT_OVERRIDE") {
-    // Handle context override (for analytics or future retraining)
-    console.log(`Context override: ${request.domain} from ${request.originalContext} to ${request.newContext}`);
-    
-    // We could log this for analytics or use it to improve the classifier
-    // For now, just acknowledge receipt
-    sendResponse({ success: true });
+    (async () => {
+      console.log(`Context override: ${request.domain} from ${request.originalContext} to ${request.newContext}`);
+      await applyAllowedContexts();  // now it's safe!
+      sendResponse({ success: true });
+    })();
     return true;
   }
-  
   return false; // No response needed for other messages
 });
 
@@ -397,39 +388,32 @@ async function handleContextUpdate(
   context: string, 
   contextData?: any
 ): Promise<void> {
-  // Get current settings
-  const { autoGroupEnabled = true } = await getStorage([
-    "autoGroupEnabled",
-  ]);
+  const { autoGroupEnabled = true } = await getStorage(["autoGroupEnabled"]);
+  if (!autoGroupEnabled) return;
 
-  // If auto-group is off, do nothing
-  if (autoGroupEnabled === false) {
-    return;
-  }
-
-  // Group tab by context
-  await groupTabByContext(tabId, context);
-  
-  // Update badge when context changes
-  updateBadge();
-  
-  // NEW: update domain → context map
   const domain = extractDomain(contextData?.url || "");
-  if (domain) {
-    const { domainContextMap = {} } =
-      await chrome.storage.local.get("domainContextMap") as { domainContextMap: Record<string,string> };
-    if (domainContextMap[domain] !== context) {
-      domainContextMap[domain] = context;
-      await chrome.storage.local.set({ domainContextMap });
-      await applyAllowedContexts();          // rebuild rules right away
-      
-      // check if this context should be blocked and redirect immediately if so
-      if (await focusEngine.isBlocked(context)) {
-        const url = contextData?.url || "";
-        const blockedUrl = chrome.runtime.getURL("blocked.html") + 
-          `?context=${encodeURIComponent(context)}&url=${encodeURIComponent(url)}`;
-        chrome.tabs.update(tabId, { url: blockedUrl });
-      }
+  const { domainContextMap = {} } =
+    await chrome.storage.local.get("domainContextMap") as { domainContextMap: Record<string,string> };
+
+  // 🚨 NEW: override the context if we have one
+  const overriddenContext = domainContextMap[domain] ?? context;
+
+  // Group tab using the correct context (override > detected)
+  await groupTabByContext(tabId, overriddenContext);
+  updateBadge();
+
+  // Update domain → context map only if it's new
+  if (domain && domainContextMap[domain] !== overriddenContext) {
+    domainContextMap[domain] = overriddenContext;
+    await chrome.storage.local.set({ domainContextMap });
+    await applyAllowedContexts(); // Rebuild DNR rules
+
+    // Check if the context is still blocked — if so, redirect again
+    if (await focusEngine.isBlocked(overriddenContext)) {
+      const url = contextData?.url || "";
+      const blockedUrl = chrome.runtime.getURL("blocked.html") + 
+        `?context=${encodeURIComponent(overriddenContext)}&url=${encodeURIComponent(url)}`;
+      chrome.tabs.update(tabId, { url: blockedUrl });
     }
   }
 }

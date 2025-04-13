@@ -19,7 +19,8 @@ const ui = {
     content: "./src/content/index.ts",
     popup: "./src/popup/popup.ts",
     options: "./src/options/options.ts",
-    sidepanel: "./src/sidepanel/index.ts"
+    sidepanel: "./src/sidepanel/index.ts",
+    blocked: "./src/blocked.ts" // ← add this line
   },
   output: {
     path: path.resolve(__dirname, "dist"),

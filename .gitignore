@@ -1,1 +1,18 @@
+# Don't track dependencies
 node_modules/
+
+# Python environments
+env310/
+.venv/
+venv/
+
+# Python + build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+dist/
+build/
+
+# VSCode + OS files
+.vscode/
+.DS_Store

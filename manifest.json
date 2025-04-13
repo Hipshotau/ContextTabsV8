@@ -3,21 +3,22 @@
   "name": "Context Focus",
   "version": "2.0",
   "description": "Focus on what matters by blocking distracting contexts",
-  "permissions": [
-    "tabs",
-    "tabGroups",
-    "storage",
-    "notifications",
-    "scripting",
-    "sidePanel",
-    "alarms",
-    "declarativeNetRequest",
-    "declarativeNetRequestWithHostAccess",
-    "webNavigation"
-  ],
   "host_permissions": [
-    "<all_urls>"
-  ],
+  "<all_urls>",
+  "chrome-extension://*/*"
+],
+"permissions": [
+  "tabs",
+  "tabGroups",
+  "storage",
+  "notifications",
+  "scripting",
+  "sidePanel",
+  "alarms",
+  "declarativeNetRequest",
+  "declarativeNetRequestWithHostAccess",
+  "webNavigation"
+],
   "web_accessible_resources": [{
     "resources": ["blocked.html", "sounds/tick.mp3", "sidepanel-timer.html"],
     "matches": ["<all_urls>"]
