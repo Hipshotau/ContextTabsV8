@@ -20,13 +20,16 @@ let endTimeCheckInterval: NodeJS.Timeout | undefined;
  * @param durationMin - Optional duration in minutes after which focus will automatically end
  */
 export async function start(allowed: string[], durationMin?: number): Promise<void> {
+  // Safety check for allowed contexts
+  const safeAllowed = Array.isArray(allowed) ? allowed : [];
+  
   // Calculate end time if duration is provided
   const endTime = durationMin ? Date.now() + durationMin * 60 * 1000 : undefined;
   
   // Save focus state
   await setFocusState({
     active: true,
-    allowedContexts: allowed,
+    allowedContexts: safeAllowed,
     endTime
   });
   
@@ -101,6 +104,15 @@ export async function isBlocked(context: string): Promise<boolean> {
   if (!focusState.active) {
     return false;
   }
+  
+  // Safety check: ensure allowedContexts is an array before using includes
+  if (!Array.isArray(focusState.allowedContexts)) {
+    console.error("[FocusEngine] allowedContexts is not an array:", focusState.allowedContexts);
+    return false; // Fail open rather than blocking everything
+  }
+  
+  // Add logging to help debug
+  console.log("[FocusEngine] allowed:", focusState.allowedContexts, "context:", context);
   
   // If context is in allowed list, it's not blocked
   if (focusState.allowedContexts.includes(context)) {

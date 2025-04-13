@@ -1,0 +1,4699 @@
+# ./webpack.config.js
+################################################################################
+const path = require("path");
+const CopyPlugin = require("copy-webpack-plugin");
+
+module.exports = [
+  {
+    name: 'ui',
+    mode: "production",
+    devtool: "source-map",
+    entry: {
+      content: "./src/content/index.ts",
+      popup: "./src/popup/popup.ts",
+      options: "./src/options/options.ts",
+      sidepanel: "./src/sidepanel/index.ts",
+      "sidepanel-timer": "./src/sidepanel/sidepanel-timer.js"
+    },
+    output: {
+      path: path.resolve(__dirname, "dist"),
+      filename: "[name].js"
+    },
+    resolve: {
+      extensions: [".ts", ".js"]
+    },
+    module: {
+      rules: [
+        {
+          test: /\.tsx?$/,
+          use: "ts-loader",
+          exclude: /node_modules/
+        }
+      ]
+    },
+    plugins: [
+      new CopyPlugin({
+        patterns: [
+          { from: "src/popup/popup.html", to: "popup.html" },
+          { from: "src/options/options.html", to: "options.html" },
+          { from: "src/sidepanel/index.html", to: "sidepanel.html" },
+          { from: "src/sidepanel/sidepanel-timer.html", to: "sidepanel-timer.html" },
+          { from: "src/blocked.html", to: "blocked.html" },
+          { from: "src/onboarding.html", to: "onboarding.html", noErrorOnMissing: true },
+          { from: "manifest.json", to: "manifest.json" },
+          { from: "icons", to: "icons" },
+          { from: "src/sounds", to: "sounds", noErrorOnMissing: true }
+        ]
+      })
+    ]
+  },
+  {
+    name: 'bg',
+    mode: 'production',
+    target: 'webworker',
+    devtool: 'source-map',
+    entry: { background: './src/background/index.ts' },
+    output: { 
+      path: path.resolve(__dirname, 'dist'),
+      filename: '[name].js' 
+    },
+    resolve: { extensions: ['.ts', '.js'] },
+    module: { 
+      rules: [{ 
+        test: /\.tsx?$/, 
+        use: 'ts-loader', 
+        exclude: /node_modules/ 
+      }] 
+    }
+  }
+];
+
+# ./src/blocked.html
+################################################################################
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Blocked by Focus Mode</title>
+  <style>
+    body {
+      background: #d32f2f;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding-top: 50px;
+    }
+    h1 {
+      font-size: 2em;
+      margin-bottom: 20px;
+    }
+    #override {
+      background-color: #f5f5f5;
+      color: #d32f2f;
+      border: none;
+      padding: 10px 15px;
+      font-size: 16px;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    #override:hover {
+      background-color: #fff;
+    }
+    #remaining {
+      font-size: 1.2em;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>⚠️ This site is blocked during Focus Mode</h1>
+  <p>Stay on track! Your focus is important.</p>
+  <div id="remaining">Session ends in <span id="countdown">--:--</span></div>
+  
+  <!-- Optional override button for emergencies (if you allow it): -->
+  <button id="override">Override (I really need this!)</button>
+  
+  <script>
+    // Update countdown timer
+    const updateCountdown = async () => {
+      try {
+        const response = await chrome.runtime.sendMessage({ type: "GET_FOCUS_TIME_LEFT" });
+        if (response && response.seconds) {
+          const mins = Math.floor(response.seconds / 60);
+          const secs = Math.floor(response.seconds % 60);
+          document.getElementById("countdown").textContent = 
+            `${mins}:${secs.toString().padStart(2, '0')}`;
+          
+          if (response.seconds <= 0) {
+            // Session ended, reload the page
+            window.location.reload();
+          }
+        }
+      } catch (err) {
+        console.error("Error getting focus time:", err);
+      }
+    };
+    
+    // Setup countdown updater
+    updateCountdown();
+    setInterval(updateCountdown, 5000);
+    
+    // Setup override button
+    const overrideBtn = document.getElementById("override");
+    if (overrideBtn) {
+      overrideBtn.addEventListener("click", () => {
+        chrome.runtime.sendMessage({ type: "OVERRIDE_BLOCK" }, response => {
+          if (response?.success) {
+            // Possibly close this tab or reload the site
+            window.location.href = response.url || "about:blank";
+          }
+        });
+      });
+    }
+  </script>
+</body>
+</html> 
+
+# ./src/sidepanel.html
+################################################################################
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Focus Session</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+    }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background-color: #f5f5f5;
+      color: #333;
+    }
+    .panel {
+      max-width: 400px;
+      margin: 0 auto;
+    }
+    .timer {
+      font-size: 36px;
+      font-weight: bold;
+      text-align: center;
+      margin: 20px 0;
+      color: #0066cc;
+    }
+    h1 {
+      text-align: center;
+      font-size: 24px;
+      margin-bottom: 20px;
+    }
+    .blocked-section {
+      margin-top: 20px;
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h2 {
+      font-size: 18px;
+      margin-top: 0;
+      margin-bottom: 10px;
+    }
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+    li {
+      margin-bottom: 8px;
+    }
+    button {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      background-color: #f44336;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    button:hover {
+      background-color: #e53935;
+    }
+    @media (prefers-color-scheme: dark) {
+      body {
+        background-color: #333;
+        color: #f5f5f5;
+      }
+      .blocked-section {
+        background-color: #444;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>Focus Session</h1>
+    <div class="timer" id="timer">00:00:00</div>
+    
+    <div class="blocked-section">
+      <h2>Blocked Categories</h2>
+      <ul id="blockedList">
+        <li>Loading...</li>
+      </ul>
+    </div>
+    
+    <!-- Parked links section -->
+    <div id="parkedLinks" class="blocked-section">
+      <!-- Parked links will be inserted here by JavaScript -->
+    </div>
+    
+    <button id="endBtn">End Focus Session</button>
+  </div>
+  
+  <script src="sidepanel.js"></script>
+</body>
+</html> 
+
+# ./src/onboarding.html
+################################################################################
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Welcome to Context Focus</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    .header {
+      background-color: #0d47a1;
+      color: white;
+      padding: 20px;
+      text-align: center;
+      border-radius: 8px;
+      margin-bottom: 30px;
+    }
+    h1 {
+      margin-top: 0;
+    }
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .step {
+      display: flex;
+      margin-bottom: 20px;
+    }
+    .step-number {
+      background-color: #0d47a1;
+      color: white;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      text-align: center;
+      line-height: 30px;
+      margin-right: 15px;
+      flex-shrink: 0;
+    }
+    .btn {
+      display: inline-block;
+      background-color: #0d47a1;
+      color: white;
+      padding: 10px 20px;
+      text-decoration: none;
+      border-radius: 4px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Welcome to Context Focus</h1>
+    <p>Take control of your digital focus with smart context switching</p>
+  </div>
+
+  <div class="card">
+    <h2>Getting Started</h2>
+    
+    <div class="step">
+      <div class="step-number">1</div>
+      <div>
+        <h3>Define Your Contexts</h3>
+        <p>Context Focus helps you by identifying the type of content you're viewing. Open the extension options to customize the contexts you want to focus on.</p>
+      </div>
+    </div>
+    
+    <div class="step">
+      <div class="step-number">2</div>
+      <div>
+        <h3>Start a Focus Session</h3>
+        <p>When you're ready to focus, click the extension icon and start a focus session. Choose which contexts to allow and how long to stay focused.</p>
+      </div>
+    </div>
+    
+    <div class="step">
+      <div class="step-number">3</div>
+      <div>
+        <h3>Park Links for Later</h3>
+        <p>Found something interesting but outside your focus? Use the "Park for Later" feature to save links without breaking your focus.</p>
+      </div>
+    </div>
+    
+    <a href="options.html" class="btn">Configure Extension Settings</a>
+  </div>
+  
+  <div class="card">
+    <h2>Need Help?</h2>
+    <p>If you have any questions or feedback, please visit our documentation or contact support.</p>
+  </div>
+</body>
+</html> 
+
+# ./src/types/index.d.ts
+################################################################################
+export interface TabContextMap {
+  [tabId: number]: string;
+}
+
+export interface PageData {
+  url: string;
+  title: string;
+  fullText: string;
+  metaDescription: string;
+  metaKeywords: string[];
+  domainCategory?: string;
+}
+
+export interface ContextResult {
+  primaryContext: string;
+  confidence: number;
+  secondaryContexts: Array<{context: string, confidence: number}>;
+  features?: Record<string, number>;
+}
+
+export interface ContextSwitch {
+  from: string;
+  to: string;
+  timestamp: number;
+  fromUrl: string;
+  toUrl: string;
+}
+
+export interface FocusStatus {
+  isLostFocus: boolean;
+  contextSwitches: ContextSwitch[];
+  currentStreak: number;
+  currentContext: string;
+}
+
+export interface ParkedLink {
+  url: string;
+  title?: string;
+  context: string;      // Entertainment, Social, …
+  timestamp: number;    // when it was parked
+}
+
+export interface FocusSettings {
+  enabled: boolean;
+  notificationsEnabled: boolean;
+  switchThreshold: number;
+  timeWindowMinutes: number;
+  focusWindowEnabled?: boolean;
+}
+
+export interface FocusState {
+  active: boolean;            // true while a focus session is running
+  allowedContexts: string[];  // the contexts the user *wants* to stay in
+  endTime?: number;           // optional timer
+}
+
+export interface StorageData {
+  extensionEnabled?: boolean;
+  autoGroupEnabled?: boolean;
+  focusSettings?: FocusSettings;
+  contextHistory?: Array<{context: string, url: string, timestamp: number, confidence: number}>;
+  domainCategories?: Record<string, string>;
+  contextKeywords?: Record<string, Record<string, number>>;
+  
+  /** New single focus state object */
+  focusState?: FocusState;
+  
+  /** Categories blocked in focus mode (for backward compatibility) */
+  blockedCategories?: string[];
+  
+  /** Per-URL or sub-URL overrides so users can reclassify them as allowed/disallowed */
+  subUrlOverrides?: Record<string, string>;
+
+  /** Links parked for later viewing */
+  parkedLinks?: ParkedLink[];
+
+  /**
+   * Saved tab groups for workspace restoration. 
+   * Each workspace can have an ID or name plus list of tabs, etc.
+   */
+  savedWorkspaces?: Array<{
+    name: string;
+    tabGroups: Array<{
+      groupId: number;
+      title: string;
+      color: chrome.tabGroups.ColorEnum;
+      tabUrls: string[];
+    }>;
+    timestamp: number;
+  }>;
+}
+
+# ./src/types/chrome.d.ts
+################################################################################
+// Type definitions for Chrome's sidePanel API
+// This extends the standard chrome type definitions
+
+declare namespace chrome {
+  export namespace sidePanel {
+    export interface SidePanelOptions {
+      path?: string;
+      enabled?: boolean;
+    }
+
+    export interface PanelInfo {
+      windowId: number;
+      path: string;
+      enabled: boolean;
+    }
+
+    export interface OpenOptions {
+      windowId?: number;
+      path?: string;
+    }
+
+    export interface CloseOptions {
+      windowId: number;
+    }
+
+    export function getOptions(): Promise<SidePanelOptions>;
+    export function setOptions(options: SidePanelOptions): Promise<void>;
+    export function open(options?: OpenOptions): Promise<void>;
+    export function close(options: CloseOptions): Promise<void>;
+    export function getAll(): Promise<PanelInfo[]>;
+  }
+} 
+
+# ./src/api/storageApi.ts
+################################################################################
+import { FocusSettings, StorageData as TypesStorageData, FocusState } from "../types/index";
+
+// Re-export the StorageData interface from types/index.d.ts
+export type StorageData = TypesStorageData;
+
+/**
+ * Get an object containing the requested keys.
+ */
+export function getStorage<T extends keyof StorageData>(
+  keys: T[]
+): Promise<Pick<StorageData, T>> {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(keys, (result) => {
+      if (chrome.runtime.lastError) {
+        return reject(chrome.runtime.lastError);
+      }
+      resolve(result as Pick<StorageData, T>);
+    });
+  });
+}
+
+/**
+ * Set or update the given keys in storage.
+ */
+export function setStorage(data: Partial<StorageData>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set(data, () => {
+      if (chrome.runtime.lastError) {
+        return reject(chrome.runtime.lastError);
+      }
+      resolve();
+    });
+  });
+}
+
+/**
+ * Add a context entry to history
+ */
+export async function addContextToHistory(
+  context: string,
+  url: string,
+  confidence: number
+): Promise<void> {
+  const { contextHistory } = await getStorage(["contextHistory"]);
+  const newHistory = contextHistory || [];
+  
+  // Add new entry
+  newHistory.push({
+    context,
+    url,
+    timestamp: Date.now(),
+    confidence
+  });
+  
+  // Limit history size
+  if (newHistory.length > 100) {
+    newHistory.shift();
+  }
+  
+  await setStorage({ contextHistory: newHistory });
+}
+
+/**
+ * Get the current focus state
+ */
+export async function getFocusState(): Promise<FocusState> {
+  const { focusState } = await getStorage(["focusState"]);
+  
+  // Default state if none exists
+  const defaultState: FocusState = {
+    active: false,
+    allowedContexts: []
+  };
+  
+  return { ...defaultState, ...focusState };
+}
+
+/**
+ * Update the focus state
+ */
+export async function setFocusState(partialState: Partial<FocusState>): Promise<void> {
+  const currentState = await getFocusState();
+  await setStorage({ 
+    focusState: { ...currentState, ...partialState }
+  });
+}
+
+# ./src/api/tabsApi.ts
+################################################################################
+import { pickColorForContext } from "../lib/pickColor";
+
+export async function groupTabByContext(tabId: number, context: string): Promise<void> {
+  const groups = await chrome.tabGroups.query({});
+  let existingGroup = groups.find((grp) => grp.title === context);
+
+  if (!existingGroup) {
+    // Create new group if none match
+    const newGroupId = await chrome.tabs.group({ tabIds: [tabId] });
+    existingGroup = await chrome.tabGroups.update(newGroupId, {
+      title: context,
+      color: pickColorForContext(context),
+    });
+  } else {
+    // Add to existing group
+    await chrome.tabs.group({ groupId: existingGroup.id, tabIds: [tabId] });
+  }
+}
+
+export function onTabRemoved(callback: (tabId: number) => void): void {
+  chrome.tabs.onRemoved.addListener(callback);
+}
+
+/** Ungroup every tab in every window */
+export async function ungroupAllTabs(): Promise<void> {
+  const groups = await chrome.tabGroups.query({});
+  for (const g of groups) {
+    const tabs = await chrome.tabs.query({ groupId: g.id });
+    if (tabs.length) {
+      await chrome.tabs.ungroup(tabs.map(t => t.id!));
+    }
+  }
+}
+
+# ./src/api/focusApi.ts
+################################################################################
+import { getStorage, setStorage } from "./storageApi";
+import { FocusStatus, FocusSettings, ContextSwitch } from "../types/index";
+
+const DEFAULT_FOCUS_SETTINGS: FocusSettings = {
+  enabled: true,
+  notificationsEnabled: true,
+  switchThreshold: 5,
+  timeWindowMinutes: 15
+};
+
+/**
+ * Get the current focus settings
+ */
+export async function getFocusSettings(): Promise<FocusSettings> {
+  const { focusSettings } = await getStorage(["focusSettings"]);
+  return { ...DEFAULT_FOCUS_SETTINGS, ...focusSettings };
+}
+
+/**
+ * Update focus settings
+ */
+export async function updateFocusSettings(settings: Partial<FocusSettings>): Promise<void> {
+  const currentSettings = await getFocusSettings();
+  await setStorage({ 
+    focusSettings: { ...currentSettings, ...settings } 
+  });
+}
+
+/**
+ * Get context switches in a time window
+ */
+export async function getContextSwitches(timeWindowMinutes: number = 15): Promise<ContextSwitch[]> {
+  const { contextHistory } = await getStorage(["contextHistory"]);
+  if (!contextHistory || contextHistory.length < 2) {
+    return [];
+  }
+  
+  const switches: ContextSwitch[] = [];
+  const now = Date.now();
+  const timeWindow = timeWindowMinutes * 60 * 1000;
+  
+  // Filter history to time window
+  const relevantHistory = contextHistory.filter(
+    entry => (now - entry.timestamp) < timeWindow
+  );
+  
+  // Find context switches
+  for (let i = 1; i < relevantHistory.length; i++) {
+    if (relevantHistory[i].context !== relevantHistory[i-1].context) {
+      switches.push({
+        from: relevantHistory[i-1].context,
+        to: relevantHistory[i].context,
+        timestamp: relevantHistory[i].timestamp,
+        fromUrl: relevantHistory[i-1].url,
+        toUrl: relevantHistory[i].url
+      });
+    }
+  }
+  
+  return switches;
+}
+
+/**
+ * Check if focus is lost based on context switching
+ */
+export async function checkFocusStatus(): Promise<FocusStatus> {
+  const settings = await getFocusSettings();
+  const switches = await getContextSwitches(settings.timeWindowMinutes);
+  
+  let currentContext = "Unknown";
+  let currentStreak = 1;
+  
+  // Get most recent context and streak
+  const { contextHistory } = await getStorage(["contextHistory"]);
+  if (contextHistory && contextHistory.length > 0) {
+    currentContext = contextHistory[contextHistory.length - 1].context;
+    
+    // Count consecutive entries with same context
+    let i = contextHistory.length - 1;
+    while (i > 0 && contextHistory[i].context === currentContext) {
+      currentStreak++;
+      i--;
+    }
+  }
+  
+  // Determine if focus is lost
+  const isLostFocus = switches.length >= settings.switchThreshold;
+  
+  return {
+    isLostFocus,
+    contextSwitches: switches,
+    currentStreak,
+    currentContext
+  };
+}
+
+/**
+ * Show focus notification
+ */
+export function showFocusNotification(contextSwitches: ContextSwitch[]): void {
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+    title: 'Focus Alert',
+    message: `You've switched contexts ${contextSwitches.length} times recently. Try to maintain focus.`,
+    buttons: [
+      { title: 'View Details' }
+    ]
+  });
+}
+
+# ./src/api/focusSessionManager.ts
+################################################################################
+import { getStorage, setStorage, getFocusState, setFocusState } from "./storageApi";
+import { StorageData } from "../types/index";
+import { groupTabByContext, ungroupAllTabs } from "./tabsApi";
+import { classifyPageContext } from "../lib/contextEngine";
+import { extractDomain } from "../lib/contextEngine/urlAnalyzer";
+import { launchFocusWindow, closeFocusWindow } from "../lib/windows/focusWindow";
+import { openSidePanel, closeSidePanel } from "../lib/panels/sidePanelManager";
+import { releaseParkedLinks } from "./parkedLinksApi";
+
+// Set up periodic badge updates
+let badgeUpdateInterval: number | undefined;
+
+// Flag to track if alarm listener is already set up
+let alarmListenerRegistered = false;
+
+/**
+ * Start a Focus Session with a specified duration (minutes) and a set of blocked categories.
+ * Activates all visual, auditory, and spatial cues for maximum ADHD-friendly feedback.
+ */
+export async function startFocusSession(durationMinutes: number, blockedCategories: string[]): Promise<void> {
+  const now = Date.now();
+  const endTime = now + durationMinutes * 60_000;
+
+  // Convert blockedCategories to allowedContexts by excluding them from all known contexts
+  const knownContexts = [
+    "Work", "Development", "Research", "Learning", 
+    "Entertainment", "Social", "Shopping", "News"
+  ];
+  const allowedContexts = knownContexts.filter(ctx => !blockedCategories.includes(ctx));
+
+  // Mark focus session as active using the new focusState object
+  await setFocusState({
+    active: true,
+    allowedContexts,
+    endTime
+  });
+
+  // Also store blockedCategories for backward compatibility with UI
+  await setStorage({ blockedCategories });
+
+  // Open the side panel for persistent timer display
+  await openSidePanel();
+
+  // Update the badge and icon to indicate focus mode
+  updateBadge(durationMinutes, false);
+  
+  // Set up alarms for badge updates instead of setInterval
+  chrome.alarms.create('badgeUpdate', { periodInMinutes: 0.2 });
+  
+  // Set up the alarm listener only once
+  if (!alarmListenerRegistered) {
+    chrome.alarms.onAlarm.addListener(async (alarm) => {
+      if (alarm.name !== 'badgeUpdate') return;
+      const timeLeft = await getFocusSessionTimeLeft();
+      const drifting = await checkIfDrifting();
+      updateBadge(timeLeft / 60, drifting); // Convert seconds to minutes
+    });
+    
+    alarmListenerRegistered = true;
+  }
+  
+  // Optionally launch a dedicated focus window
+  const storage = await getStorage(["focusSettings"]);
+  const focusWindowEnabled = storage.focusSettings?.focusWindowEnabled || false;
+  if (focusWindowEnabled) {
+    await launchFocusWindow();
+  }
+
+  // Show notification
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+    title: 'Focus Session Started',
+    message: `Focus session started for ${durationMinutes} minutes. Stay focused!`,
+  });
+}
+
+/**
+ * End the current Focus Session.
+ * Optionally save the workspace (tab groups) if user requests.
+ */
+export async function endFocusSession(saveWorkspace: boolean, workspaceName: string = ""): Promise<void> {
+  // If user wants to save workspace, store it
+  if (saveWorkspace && workspaceName) {
+    await saveCurrentWorkspace(workspaceName);
+  }
+
+  // Clear focus state using the new API
+  await setFocusState({
+    active: false,
+    endTime: undefined
+  });
+  
+  // Close the side panel
+  await closeSidePanel();
+  
+  // Ungroup all tabs
+  await ungroupAllTabs();
+  
+  // Clear badge and restore icon
+  chrome.action.setBadgeText({ text: "" });
+  chrome.action.setIcon({ path: chrome.runtime.getURL('icons/icon48.png') });
+  
+  // Clear the alarms
+  chrome.alarms.clear('badgeUpdate');
+  
+  // Close focus window if it exists
+  await closeFocusWindow();
+  
+  // Show end notification
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+    title: 'Focus Session Ended',
+    message: `Great job! Your focus session has ended.`,
+  });
+  
+  // Release any links that were parked during the session
+  await releaseParkedLinks();
+}
+
+/**
+ * Updates the badge text and color based on session state
+ */
+function updateBadge(timeLeftMin: number, drifting: boolean) {
+  chrome.action.setBadgeBackgroundColor({
+    color: drifting ? "#d32f2f" : "#1565c0"  // red if drifting, blue otherwise
+  });
+  
+  chrome.action.setBadgeText({
+    text: timeLeftMin > 0 ? Math.ceil(timeLeftMin).toString() : ""
+  });
+  
+  chrome.action.setIcon({
+    path: drifting ? 
+      chrome.runtime.getURL('icons/icon48.png') : // Would be focus_drift.png if it existed
+      chrome.runtime.getURL('icons/icon48.png')   // Would be focus_on.png if it existed
+  });
+}
+
+/**
+ * Check if the user is currently drifting from focus
+ */
+async function checkIfDrifting(): Promise<boolean> {
+  const { focusSettings } = await getStorage(["focusSettings"]);
+  if (!focusSettings) return false;
+  
+  // For now, we'll just use a simple check based on the existing focus API
+  const response = await chrome.runtime.sendMessage({ type: "CHECK_FOCUS_STATUS" });
+  return response?.isLostFocus || false;
+}
+
+/**
+ * Check if a focus session is currently active
+ */
+export async function isFocusSessionActive(): Promise<boolean> {
+  const focusState = await getFocusState();
+  return focusState.active;
+}
+
+/**
+ * Returns how many seconds remain in the current focus session (if any)
+ */
+export async function getFocusSessionTimeLeft(): Promise<number> {
+  const focusState = await getFocusState();
+  if (!focusState.active || !focusState.endTime) return 0;
+
+  const now = Date.now();
+  const diff = focusState.endTime - now;
+  return diff > 0 ? diff / 1000 : 0;   // Return seconds, not minutes
+}
+
+/**
+ * Determine if this URL is blocked under the current Focus Session settings.
+ */
+export async function isUrlBlocked(url: string, detectedCategory: string): Promise<boolean> {
+  const focusState = await getFocusState();
+
+  // If session not active, not blocked
+  if (!focusState.active) {
+    return false;
+  }
+
+  // If the context is not in allowed contexts, block it
+  if (detectedCategory && !focusState.allowedContexts.includes(detectedCategory)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Save current window's tab groups (workspace).
+ * This can be called at the end of a Focus Session or on demand.
+ */
+export async function saveCurrentWorkspace(name: string): Promise<void> {
+  // Get all tab groups
+  const groups = await chrome.tabGroups.query({});
+  // For each group, gather tab URLs
+  const workspaceGroups = await Promise.all(
+    groups.map(async (grp) => {
+      const tabs = await chrome.tabs.query({ groupId: grp.id });
+      return {
+        groupId: grp.id,
+        title: grp.title || "",
+        color: grp.color,
+        tabUrls: tabs.map(t => t.url || "")
+      };
+    })
+  );
+
+  // Store in savedWorkspaces
+  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
+  const newWorkspaceEntry = {
+    name,
+    tabGroups: workspaceGroups,
+    timestamp: Date.now()
+  };
+
+  const updatedWorkspaces = Array.isArray(savedWorkspaces) 
+    ? [...savedWorkspaces, newWorkspaceEntry]
+    : [newWorkspaceEntry];
+
+  await setStorage({ savedWorkspaces: updatedWorkspaces });
+}
+
+/**
+ * Restore a saved workspace by name. 
+ * Re-open tabs and re-create groups (approximation).
+ */
+export async function restoreWorkspace(name: string): Promise<void> {
+  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
+  if (!savedWorkspaces) return;
+
+  const workspace = savedWorkspaces.find(ws => ws.name === name);
+  if (!workspace) return;
+
+  // For each group, re-create tabs
+  for (const grp of workspace.tabGroups) {
+    // Open each tab
+    const tabIds = [];
+    for (const url of grp.tabUrls) {
+      const createdTab = await chrome.tabs.create({ url, active: false });
+      tabIds.push(createdTab.id as number);
+    }
+    // Create or update tab group
+    if (tabIds.length > 0) {
+      const newGroupId = await chrome.tabs.group({ tabIds });
+      await chrome.tabGroups.update(newGroupId, {
+        title: grp.title || "",
+        color: grp.color
+      });
+    }
+  }
+}
+
+/**
+ * Clean up old workspace entries if needed, or remove a workspace by name, etc.
+ */
+export async function removeWorkspace(name: string): Promise<void> {
+  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
+  if (!savedWorkspaces) return;
+
+  const updatedWorkspaces = savedWorkspaces.filter(ws => ws.name !== name);
+  await setStorage({ savedWorkspaces: updatedWorkspaces });
+} 
+
+# ./src/api/parkedLinksApi.ts
+################################################################################
+import { getStorage, setStorage } from "./storageApi";
+import { ParkedLink } from "../types/index";
+
+/**
+ * Save a link for later viewing
+ */
+export async function saveForLater(url: string, context: string, title?: string): Promise<void> {
+  const { parkedLinks = [] } = await getStorage(["parkedLinks"]);
+  
+  // Check if the URL is already parked to avoid duplicates
+  const isDuplicate = parkedLinks.some(link => link.url === url);
+  
+  if (!isDuplicate) {
+    const newLink: ParkedLink = {
+      url,
+      title,
+      context,
+      timestamp: Date.now()
+    };
+    
+    await setStorage({
+      parkedLinks: [...parkedLinks, newLink]
+    });
+  }
+}
+
+/**
+ * Get all parked links
+ */
+export async function getParkedLinks(): Promise<ParkedLink[]> {
+  const { parkedLinks = [] } = await getStorage(["parkedLinks"]);
+  return parkedLinks;
+}
+
+/**
+ * Open all parked links in new tabs and clear the list
+ */
+export async function releaseParkedLinks(): Promise<void> {
+  const parkedLinks = await getParkedLinks();
+  
+  if (parkedLinks.length === 0) {
+    return;
+  }
+  
+  // Create a new tab group for the parked links
+  const currentWindow = await chrome.windows.getCurrent();
+  let groupId: number | undefined;
+  
+  try {
+    // Open all the links in new tabs
+    const openedTabIds: number[] = [];
+    
+    for (const link of parkedLinks) {
+      const tab = await chrome.tabs.create({
+        url: link.url,
+        active: false
+      });
+      
+      if (tab.id) {
+        openedTabIds.push(tab.id);
+      }
+    }
+    
+    // Group the tabs if we have any
+    if (openedTabIds.length > 0) {
+      try {
+        groupId = await chrome.tabs.group({
+          tabIds: openedTabIds
+        });
+        
+        if (groupId) {
+          await chrome.tabGroups.update(groupId, {
+            title: "Parked Links",
+            color: "blue"
+          });
+        }
+      } catch (groupError) {
+        console.error("Error creating tab group:", groupError);
+      }
+    }
+    
+    // Clear the parked links list
+    await setStorage({ parkedLinks: [] });
+    
+    // Show a notification
+    chrome.notifications.create({
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("icons/icon48.png"),
+      title: "Parked Links Opened",
+      message: `Opened ${parkedLinks.length} links that were saved during your focus session.`
+    });
+  } catch (error) {
+    console.error("Error opening parked links:", error);
+  }
+}
+
+/**
+ * More robust function to navigate back or close the current tab
+ */
+export async function goBackOrClose(tabId: number): Promise<void> {
+  try {
+    // Get tab info first to confirm it exists
+    const tab = await chrome.tabs.get(tabId);
+    
+    // First try to determine if we can go back using script injection
+    try {
+      const historyResults = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => ({
+          canGoBack: window.history.length > 1,
+          url: window.location.href
+        })
+      });
+      
+      const { canGoBack } = historyResults[0].result;
+      
+      if (canGoBack) {
+        // Navigate back if possible using script injection
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          func: () => window.history.back()
+        });
+        
+        // Success, we're done
+        return;
+      }
+      
+      // Can't go back, use fallback approach
+      await handleNavigationFallback(tabId, tab);
+    } catch (err) {
+      console.error("Script execution error:", err);
+      
+      // Fallback to simpler chrome.tabs.goBack API
+      try {
+        await chrome.tabs.goBack(tabId);
+      } catch (backError) {
+        // If that fails too, use final fallback
+        await handleNavigationFallback(tabId, tab);
+      }
+    }
+  } catch (err) {
+    console.error("Tab lookup error:", err);
+    // Tab might no longer exist, nothing to do
+  }
+}
+
+/**
+ * Fallback navigation handler when going back isn't possible
+ */
+async function handleNavigationFallback(tabId: number, tab: chrome.tabs.Tab): Promise<void> {
+  try {
+    // Get all tabs in the window
+    const allTabs = await chrome.tabs.query({ windowId: tab.windowId });
+    
+    if (allTabs.length > 1) {
+      // More than one tab, find one to focus
+      const currentIndex = allTabs.findIndex(t => t.id === tabId);
+      const targetIndex = currentIndex > 0 ? currentIndex - 1 : (currentIndex + 1) % allTabs.length;
+      const targetTab = allTabs[targetIndex];
+      
+      // Focus the other tab first
+      if (targetTab.id) {
+        await chrome.tabs.update(targetTab.id, { active: true });
+        
+        // Then remove the current tab
+        setTimeout(() => {
+          chrome.tabs.remove(tabId).catch(e => {
+            console.error("Tab removal failed:", e);
+          });
+        }, 100);
+      }
+    } else {
+      // Last tab, navigate to blank page instead
+      await chrome.tabs.update(tabId, { url: "about:blank" });
+    }
+  } catch (e) {
+    console.error("Navigation fallback failed:", e);
+    // Last resort - try basic navigation
+    try {
+      await chrome.tabs.update(tabId, { url: "about:blank" });
+    } catch (finalError) {
+      console.error("Final fallback failed:", finalError);
+    }
+  }
+}
+
+/**
+ * Show a toast notification in the current tab
+ */
+export async function showToast(tabId: number, message: string, duration = 3000): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (msg: string, dur: number) => {
+        const toast = document.createElement("div");
+        toast.style.cssText = `
+          position: fixed;
+          bottom: 20px;
+          right: 20px;
+          background-color: rgba(0, 102, 204, 0.9);
+          color: white;
+          padding: 12px 20px;
+          border-radius: 4px;
+          box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+          font-family: Arial, sans-serif;
+          z-index: 2147483647;
+          max-width: 300px;
+          transition: opacity 0.3s ease-in-out;
+        `;
+        toast.textContent = msg;
+        document.body.appendChild(toast);
+        
+        // Fade out and remove
+        setTimeout(() => {
+          toast.style.opacity = "0";
+          setTimeout(() => toast.remove(), 300);
+        }, dur - 300);
+      },
+      args: [message, duration]
+    });
+  } catch (error) {
+    console.error("Error showing toast:", error);
+  }
+}
+
+/**
+ * Clear all parked links without opening them
+ */
+export async function clearParkedLinks(): Promise<void> {
+  await setStorage({ parkedLinks: [] });
+} 
+
+# ./src/lib/pickColor.ts
+################################################################################
+export function pickColorForContext(context: string): chrome.tabGroups.ColorEnum {
+  switch (context) {
+    case "Work":
+      return "yellow";
+    case "Learning":
+      return "blue";
+    case "Entertainment":
+      return "green";
+    case "News":
+      return "red";
+    case "Shopping":
+      return "purple";
+    case "Social":
+      return "cyan";
+    case "Research":
+      return "pink";
+    case "Development":
+      return "orange";
+    default:
+      return "grey";  // Chrome uses "grey" (British spelling) not "gray"
+  }
+}
+
+# ./src/lib/focusEngine.ts
+################################################################################
+/**
+ * Focus Engine - Core logic for the Focus feature
+ * 
+ * This module implements the state machine for focus mode, following the principle
+ * of "block by exclusion" - where user picks ALLOWED contexts and everything else is blocked.
+ */
+
+import { getFocusState, setFocusState } from "../api/storageApi";
+import { FocusState } from "../types/index";
+
+// State for tracking if a navigation was blocked recently (for badge alert)
+let recentlyBlocked = false;
+let blockClearTimer: NodeJS.Timeout | undefined;
+let endTimeCheckInterval: NodeJS.Timeout | undefined;
+
+/**
+ * Start a focus session
+ * 
+ * @param allowed - Array of context categories that are allowed during focus
+ * @param durationMin - Optional duration in minutes after which focus will automatically end
+ */
+export async function start(allowed: string[], durationMin?: number): Promise<void> {
+  // Safety check for allowed contexts
+  const safeAllowed = Array.isArray(allowed) ? allowed : [];
+  
+  // Calculate end time if duration is provided
+  const endTime = durationMin ? Date.now() + durationMin * 60 * 1000 : undefined;
+  
+  // Save focus state
+  await setFocusState({
+    active: true,
+    allowedContexts: safeAllowed,
+    endTime
+  });
+  
+  // Set badge to show focus is active
+  chrome.action.setBadgeText({ text: "•" });
+  chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue
+  
+  // Setup interval to check for timer expiration
+  if (endTime) {
+    if (endTimeCheckInterval) {
+      clearInterval(endTimeCheckInterval);
+    }
+    
+    endTimeCheckInterval = setInterval(async () => {
+      const focusState = await getFocusState();
+      
+      if (focusState.active && focusState.endTime && focusState.endTime <= Date.now()) {
+        // Timer expired, end focus session
+        console.log("Focus timer expired automatically");
+        end();
+        
+        // Show a notification
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+          title: 'Focus Session Ended',
+          message: 'Your focus session has ended. Great job!',
+          priority: 2
+        });
+      }
+    }, 15000); // Check every 15 seconds
+  }
+}
+
+/**
+ * End a focus session
+ */
+export async function end(): Promise<void> {
+  // Clear focus state
+  await setFocusState({
+    active: false,
+    endTime: undefined
+  });
+  
+  // Clear badge
+  chrome.action.setBadgeText({ text: "" });
+  
+  // Clear timer interval
+  if (endTimeCheckInterval) {
+    clearInterval(endTimeCheckInterval);
+    endTimeCheckInterval = undefined;
+  }
+  
+  // Reset block indicator
+  recentlyBlocked = false;
+  if (blockClearTimer) {
+    clearTimeout(blockClearTimer);
+    blockClearTimer = undefined;
+  }
+}
+
+/**
+ * Check if a context should be blocked
+ * 
+ * @param context - The context category to check
+ * @returns true if the context should be blocked, false otherwise
+ */
+export async function isBlocked(context: string): Promise<boolean> {
+  const focusState = await getFocusState();
+  
+  // If focus is not active, nothing is blocked
+  if (!focusState.active) {
+    return false;
+  }
+  
+  // Safety check: ensure allowedContexts is an array before using includes
+  if (!Array.isArray(focusState.allowedContexts)) {
+    console.error("[FocusEngine] allowedContexts is not an array:", focusState.allowedContexts);
+    return false; // Fail open rather than blocking everything
+  }
+  
+  // Add logging to help debug
+  console.log("[FocusEngine] allowed:", focusState.allowedContexts, "context:", context);
+  
+  // If context is in allowed list, it's not blocked
+  if (focusState.allowedContexts.includes(context)) {
+    return false;
+  }
+  
+  // Context is not in allowed list, so it's blocked
+  // Update the "recently blocked" state for badge
+  recentlyBlocked = true;
+  
+  // Show red "!" badge
+  chrome.action.setBadgeText({ text: "!" });
+  chrome.action.setBadgeBackgroundColor({ color: "#d32f2f" }); // Red
+  
+  // Clear the blocked indicator after 30 seconds
+  if (blockClearTimer) {
+    clearTimeout(blockClearTimer);
+  }
+  
+  blockClearTimer = setTimeout(() => {
+    if (recentlyBlocked) {
+      recentlyBlocked = false;
+      // Restore the normal focus badge
+      chrome.action.setBadgeText({ text: "•" });
+      chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue
+    }
+  }, 30000);
+  
+  return true;
+}
+
+/**
+ * Check if a focus session is currently active
+ * 
+ * @returns true if a focus session is active, false otherwise
+ */
+export async function isActive(): Promise<boolean> {
+  const focusState = await getFocusState();
+  return focusState.active;
+}
+
+/**
+ * Get the time left in the current focus session in minutes
+ * 
+ * @returns Minutes left in the focus session, or 0 if no session or no timer
+ */
+export async function getTimeLeft(): Promise<number> {
+  const focusState = await getFocusState();
+  
+  if (!focusState.active || !focusState.endTime) {
+    return 0;
+  }
+  
+  const timeLeftMs = Math.max(0, focusState.endTime - Date.now());
+  return Math.floor(timeLeftMs / 60000); // Convert to minutes
+} 
+
+# ./src/lib/contextEngine/textAnalyzer.ts
+################################################################################
+import { StorageData } from "../../api/storageApi";
+
+// Default keyword dictionaries with weights
+const DEFAULT_CONTEXT_KEYWORDS: Record<string, Record<string, number>> = {
+  "Work": {
+    "project": 0.8, "deadline": 0.9, "meeting": 0.7, "task": 0.8, "client": 0.8, 
+    "report": 0.7, "presentation": 0.7, "office": 0.6, "business": 0.8, "email": 0.6,
+    "colleague": 0.7, "manager": 0.7, "workflow": 0.8, "productivity": 0.7, "professional": 0.7
+  },
+  "Learning": {
+    "course": 0.9, "lesson": 0.8, "tutorial": 0.9, "learn": 0.8, "study": 0.9, 
+    "education": 0.7, "assignment": 0.9, "homework": 0.9, "university": 0.8, "college": 0.8,
+    "school": 0.7, "academy": 0.7, "lecture": 0.9, "professor": 0.8, "student": 0.7,
+    "quiz": 0.8, "exam": 0.9, "test": 0.7, "knowledge": 0.6, "textbook": 0.8
+  },
+  "Entertainment": {
+    "movie": 0.9, "show": 0.7, "stream": 0.7, "watch": 0.6, "video": 0.7,
+    "game": 0.8, "play": 0.6, "fun": 0.7, "music": 0.8, "song": 0.8,
+    "entertainment": 0.9, "netflix": 0.9, "youtube": 0.8, "hulu": 0.9, "disney": 0.8,
+    "hbo": 0.9, "amazon": 0.5, "twitch": 0.9, "gaming": 0.9
+  },
+  "News": {
+    "news": 0.9, "article": 0.7, "report": 0.6, "breaking": 0.8, "headline": 0.9,
+    "journalist": 0.8, "media": 0.7, "press": 0.7, "update": 0.6, "current": 0.6,
+    "politics": 0.7, "election": 0.7, "government": 0.6, "president": 0.6, "minister": 0.6,
+    "cnn": 0.9, "bbc": 0.9, "nyt": 0.9, "reuters": 0.9, "associated": 0.7
+  },
+  "Shopping": {
+    "shop": 0.9, "buy": 0.8, "purchase": 0.8, "order": 0.7, "cart": 0.9,
+    "checkout": 0.9, "price": 0.8, "discount": 0.8, "product": 0.8, "item": 0.7,
+    "amazon": 0.8, "ebay": 0.9, "etsy": 0.9, "store": 0.8, "mall": 0.8,
+    "shipping": 0.8, "delivery": 0.7, "payment": 0.8, "credit": 0.7, "review": 0.6
+  },
+  "Social": {
+    "friend": 0.8, "message": 0.7, "chat": 0.8, "post": 0.7, "share": 0.7,
+    "social": 0.9, "network": 0.7, "facebook": 0.9, "twitter": 0.9, "instagram": 0.9,
+    "snapchat": 0.9, "tiktok": 0.9, "linkedin": 0.9, "reddit": 0.8, "forum": 0.7,
+    "comment": 0.7, "like": 0.6, "follow": 0.6, "connect": 0.7, "profile": 0.8
+  },
+  "Research": {
+    "research": 0.9, "study": 0.8, "analysis": 0.8, "data": 0.7, "information": 0.6,
+    "journal": 0.9, "article": 0.8, "paper": 0.7, "science": 0.8, "scientific": 0.8,
+    "academic": 0.9, "scholar": 0.9, "experiment": 0.8, "theory": 0.7, "hypothesis": 0.8,
+    "methodology": 0.8, "finding": 0.7, "conclude": 0.7, "reference": 0.7, "citation": 0.8
+  },
+  "Development": {
+    "code": 0.9, "programming": 0.9, "developer": 0.9, "software": 0.8, "github": 0.9,
+    "git": 0.8, "repository": 0.8, "commit": 0.8, "function": 0.7, "class": 0.7,
+    "method": 0.7, "variable": 0.7, "object": 0.7, "array": 0.7, "string": 0.7,
+    "stack": 0.8, "overflow": 0.8, "javascript": 0.8, "python": 0.8, "typescript": 0.8
+  }
+};
+
+/**
+ * Load context keywords from storage or use defaults
+ */
+export async function getContextKeywords(): Promise<Record<string, Record<string, number>>> {
+  try {
+    const { contextKeywords } = await chrome.storage.local.get("contextKeywords") as Pick<StorageData, "contextKeywords">;
+    return contextKeywords || DEFAULT_CONTEXT_KEYWORDS;
+  } catch (error) {
+    console.error("Error loading context keywords:", error);
+    return DEFAULT_CONTEXT_KEYWORDS;
+  }
+}
+
+/**
+ * Preprocess text by removing boilerplate and normalizing
+ */
+function preprocessText(text: string): string {
+  // Remove common boilerplate elements
+  const boilerplatePatterns = [
+    /<header[^>]*>[\s\S]*?<\/header>/gi,
+    /<footer[^>]*>[\s\S]*?<\/footer>/gi,
+    /<nav[^>]*>[\s\S]*?<\/nav>/gi,
+    /<script[^>]*>[\s\S]*?<\/script>/gi,
+    /<style[^>]*>[\s\S]*?<\/style>/gi,
+    /<!--[\s\S]*?-->/g,
+    /cookie|privacy|terms|menu|navigation|footer|header|sidebar/gi
+  ];
+  
+  let processedText = text;
+  for (const pattern of boilerplatePatterns) {
+    processedText = processedText.replace(pattern, ' ');
+  }
+  
+  // Normalize whitespace
+  processedText = processedText.replace(/\s+/g, ' ').trim();
+  
+  // Cap text length to focus on most relevant content
+  const MAX_TEXT_LENGTH = 5000;
+  if (processedText.length > MAX_TEXT_LENGTH) {
+    processedText = processedText.substring(0, MAX_TEXT_LENGTH);
+  }
+  
+  return processedText;
+}
+
+/**
+ * Calculate TF-IDF scores with normalization
+ */
+function calculateTFIDF(text: string, keywords: Record<string, Record<string, number>>): Record<string, number> {
+  const textLower = text.toLowerCase();
+  const scores: Record<string, number> = {};
+  
+  // Calculate term frequencies
+  const termFreq: Record<string, number> = {};
+  const words = textLower.split(/\W+/);
+  const totalWords = words.length;
+  
+  for (const word of words) {
+    termFreq[word] = (termFreq[word] || 0) + 1;
+  }
+  
+  // Calculate TF-IDF scores for each category
+  for (const [category, keywordWeights] of Object.entries(keywords)) {
+    let categoryScore = 0;
+    let matchedTerms = 0;
+    
+    for (const [keyword, weight] of Object.entries(keywordWeights)) {
+      if (termFreq[keyword]) {
+        // TF: term frequency normalized by total words
+        const tf = termFreq[keyword] / totalWords;
+        
+        // IDF: inverse document frequency (simplified)
+        const idf = Math.log(1 / (1 + Math.exp(-tf)));
+        
+        categoryScore += tf * idf * weight;
+        matchedTerms++;
+      }
+    }
+    
+    // Normalize score based on number of matched terms
+    if (matchedTerms > 0) {
+      scores[category] = Math.min(1, categoryScore / (matchedTerms * 0.3));
+    } else {
+      scores[category] = 0;
+    }
+  }
+  
+  return scores;
+}
+
+/**
+ * Analyze text with improved TF-IDF scoring
+ */
+export async function analyzeText(text: string): Promise<Record<string, number>> {
+  const processedText = preprocessText(text);
+  const keywords = await getContextKeywords();
+  return calculateTFIDF(processedText, keywords);
+}
+
+# ./src/lib/contextEngine/urlAnalyzer.ts
+################################################################################
+// Known domain categories
+const DOMAIN_CATEGORIES: Record<string, string> = {
+  // Work/Productivity
+  "docs.google.com": "Work",
+  "sheets.google.com": "Work",
+  "slides.google.com": "Work",
+  "drive.google.com": "Work",
+  "office.com": "Work",
+  "microsoft365.com": "Work",
+  "linkedin.com": "Work",
+  "slack.com": "Work",
+  "teams.microsoft.com": "Work",
+  "asana.com": "Work",
+  "trello.com": "Work",
+  "notion.so": "Work",
+  "monday.com": "Work",
+  "atlassian.com": "Work",
+  "jira.com": "Work",
+  "basecamp.com": "Work",
+  "zoom.us": "Work",
+  
+  // Learning
+  "coursera.org": "Learning",
+  "udemy.com": "Learning",
+  "edx.org": "Learning",
+  "khanacademy.org": "Learning",
+  "duolingo.com": "Learning",
+  "canvas.instructure.com": "Learning",
+  "blackboard.com": "Learning",
+  "quizlet.com": "Learning",
+  "chegg.com": "Learning",
+  "brilliant.org": "Learning",
+  "codecademy.com": "Learning",
+  "freecodecamp.org": "Learning",
+  "lynda.com": "Learning",
+  "skillshare.com": "Learning",
+  "pluralsight.com": "Learning",
+  
+  // Entertainment
+  "netflix.com": "Entertainment",
+  "hulu.com": "Entertainment",
+  "disneyplus.com": "Entertainment",
+  "hbomax.com": "Entertainment",
+  "youtube.com": "Entertainment",
+  "twitch.tv": "Entertainment",
+  "spotify.com": "Entertainment",
+  "pandora.com": "Entertainment",
+  "tidal.com": "Entertainment",
+  "soundcloud.com": "Entertainment",
+  "steam.com": "Entertainment",
+  "epicgames.com": "Entertainment",
+  "ign.com": "Entertainment",
+  "imdb.com": "Entertainment",
+  "rottentomatoes.com": "Entertainment",
+  
+  // News
+  "cnn.com": "News",
+  "bbc.com": "News",
+  "nytimes.com": "News",
+  "washingtonpost.com": "News",
+  "reuters.com": "News",
+  "apnews.com": "News",
+  "foxnews.com": "News",
+  "nbcnews.com": "News",
+  "abcnews.go.com": "News",
+  "cbsnews.com": "News",
+  "politico.com": "News",
+  "economist.com": "News",
+  "wsj.com": "News",
+  "bloomberg.com": "News",
+  "theguardian.com": "News",
+  
+  // Development
+  "github.com": "Development",
+  "gitlab.com": "Development",
+  "bitbucket.org": "Development",
+  "stackoverflow.com": "Development",
+  "developer.mozilla.org": "Development",
+  "w3schools.com": "Development",
+  "codepen.io": "Development",
+  "replit.com": "Development",
+  "codesandbox.io": "Development",
+  "jsfiddle.net": "Development",
+  "npmjs.com": "Development",
+  "pypi.org": "Development",
+  "docker.com": "Development",
+  "kubernetes.io": "Development",
+  "digitalocean.com": "Development",
+  
+  // Shopping
+  "amazon.com": "Shopping",
+  "ebay.com": "Shopping",
+  "walmart.com": "Shopping",
+  "target.com": "Shopping",
+  "bestbuy.com": "Shopping",
+  "etsy.com": "Shopping",
+  "aliexpress.com": "Shopping",
+  "wayfair.com": "Shopping",
+  "costco.com": "Shopping",
+  "newegg.com": "Shopping",
+  "homedepot.com": "Shopping",
+  "lowes.com": "Shopping",
+  "macys.com": "Shopping",
+  "nordstrom.com": "Shopping",
+  "zappos.com": "Shopping",
+  
+  // Social
+  "facebook.com": "Social",
+  "twitter.com": "Social",
+  "instagram.com": "Social",
+  "reddit.com": "Social",
+  "pinterest.com": "Social",
+  "tumblr.com": "Social",
+  "tiktok.com": "Social",
+  "snapchat.com": "Social",
+  "discord.com": "Social",
+  "messenger.com": "Social",
+  "telegram.org": "Social",
+  "whatsapp.com": "Social",
+  "signal.org": "Social",
+  "medium.com": "Social",
+  "quora.com": "Social",
+  
+  // Research
+  "scholar.google.com": "Research",
+  "pubmed.ncbi.nlm.nih.gov": "Research",
+  "researchgate.net": "Research",
+  "academia.edu": "Research",
+  "jstor.org": "Research",
+  "springer.com": "Research",
+  "sciencedirect.com": "Research",
+  "ieee.org": "Research",
+  "ncbi.nlm.nih.gov": "Research",
+  "arxiv.org": "Research",
+  "sciencemag.org": "Research",
+  "nature.com": "Research",
+  "webofknowledge.com": "Research",
+  "scopus.com": "Research",
+  "mendeley.com": "Research"
+};
+
+/**
+ * Extract domain from URL
+ */
+export function extractDomain(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname;
+  } catch (error) {
+    console.error("Error extracting domain:", error);
+    return "";
+  }
+}
+
+/**
+ * Get domain category from predefined list
+ */
+export function getDomainCategory(domain: string): string | undefined {
+  // Try exact match
+  if (DOMAIN_CATEGORIES[domain]) {
+    return DOMAIN_CATEGORIES[domain];
+  }
+  
+  // Try with 'www.' prefix removed
+  if (domain.startsWith('www.')) {
+    const withoutWww = domain.substring(4);
+    if (DOMAIN_CATEGORIES[withoutWww]) {
+      return DOMAIN_CATEGORIES[withoutWww];
+    }
+  }
+  
+  // Try parent domain
+  const parts = domain.split('.');
+  if (parts.length > 2) {
+    const parentDomain = parts.slice(parts.length - 2).join('.');
+    return DOMAIN_CATEGORIES[parentDomain];
+  }
+  
+  return undefined;
+}
+
+/**
+ * Extract path keywords from URL
+ */
+export function extractPathKeywords(url: string): string[] {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.pathname
+      .split('/')
+      .filter(Boolean)
+      .flatMap(segment => 
+        segment
+          .split(/[-_]/)
+          .filter(word => word.length > 2)
+      );
+  } catch (error) {
+    console.error("Error extracting path keywords:", error);
+    return [];
+  }
+}
+
+/**
+ * Analyze URL for context clues
+ */
+export function analyzeUrl(url: string): Record<string, number> {
+  const domain = extractDomain(url);
+  const domainCategory = getDomainCategory(domain);
+  const pathKeywords = extractPathKeywords(url);
+  
+  const scores: Record<string, number> = {};
+  
+  // Set base score from domain
+  if (domainCategory) {
+    scores[domainCategory] = 0.8;
+  }
+  
+  // Add scores from path keywords (could be enhanced with TF-IDF against keywords)
+  // This is a simplified implementation
+  
+  return scores;
+}
+
+# ./src/lib/contextEngine/embeddingClassifier.ts
+################################################################################
+// This is a simplified version that can work without TensorFlow.js
+// In production, you'd use the Universal Sentence Encoder model
+
+/**
+ * Simple context classifier that doesn't rely on TensorFlow
+ * This is a fallback for when TensorFlow.js can't be used
+ */
+export class TextClassifier {
+  private initialized: boolean = false;
+  private categoryKeywords: Record<string, string[]> = {
+    "Work": [
+      "project deadline meeting task client report presentation office business email colleague manager workflow productivity professional",
+    ],
+    "Learning": [
+      "course lesson tutorial learn study education assignment homework university college school academy lecture professor student quiz exam test knowledge textbook",
+    ],
+    "Entertainment": [
+      "movie show stream watch video game play fun music song entertainment netflix youtube hulu disney hbo amazon twitch gaming",
+    ],
+    "News": [
+      "news article report breaking headline journalist media press update current politics election government president minister cnn bbc nyt reuters associated",
+    ],
+    "Shopping": [
+      "shop buy purchase order cart checkout price discount product item amazon ebay etsy store mall shipping delivery payment credit review",
+    ],
+    "Social": [
+      "friend message chat post share social network facebook twitter instagram snapchat tiktok linkedin reddit forum comment like follow connect profile",
+    ],
+    "Research": [
+      "research study analysis data information journal article paper science scientific academic scholar experiment theory hypothesis methodology finding conclude reference citation",
+    ],
+    "Development": [
+      "code programming developer software github git repository commit function class method variable object array string stack overflow javascript python typescript",
+    ]
+  };
+  
+  /**
+   * Initialize the classifier
+   */
+  async initialize(): Promise<void> {
+    this.initialized = true;
+  }
+  
+  /**
+   * Classify text into context categories
+   */
+  async classify(text: string): Promise<Record<string, number>> {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+    
+    const textLower = text.toLowerCase();
+    const scores: Record<string, number> = {};
+    
+    // Simple scoring based on keyword presence
+    for (const [category, keywordLists] of Object.entries(this.categoryKeywords)) {
+      let categoryScore = 0;
+      
+      for (const keywordList of keywordLists) {
+        const keywords = keywordList.split(" ");
+        let keywordsFound = 0;
+        
+        for (const keyword of keywords) {
+          if (textLower.includes(keyword)) {
+            keywordsFound++;
+            categoryScore += 1;
+          }
+        }
+        
+        // Normalize score
+        if (keywordsFound > 0) {
+          categoryScore = categoryScore / (keywords.length * 0.3);
+        }
+      }
+      
+      scores[category] = Math.min(1, categoryScore);
+    }
+    
+    return scores;
+  }
+}
+
+# ./src/lib/contextEngine/contextHistory.ts
+################################################################################
+import { addContextToHistory, getStorage } from "../../api/storageApi";
+import { ContextSwitch } from "../../types/index";
+
+/**
+ * Class to track context history and detect focus issues
+ */
+export class ContextTracker {
+  private latestContext: string = "Unknown";
+  private latestUrl: string = "";
+  
+  /**
+   * Add context to history
+   */
+  async addContext(context: string, url: string, confidence: number): Promise<void> {
+    this.latestContext = context;
+    this.latestUrl = url;
+    
+    // Store in persistent storage
+    await addContextToHistory(context, url, confidence);
+  }
+  
+  /**
+   * Get context switches in a time window
+   */
+  async getContextSwitches(timeWindowMinutes: number = 15): Promise<ContextSwitch[]> {
+    const { contextHistory } = await getStorage(["contextHistory"]);
+    if (!contextHistory || contextHistory.length < 2) {
+      return [];
+    }
+    
+    const switches: ContextSwitch[] = [];
+    const now = Date.now();
+    const timeWindow = timeWindowMinutes * 60 * 1000;
+    
+    // Filter history to time window
+    const relevantHistory = contextHistory.filter(
+      entry => (now - entry.timestamp) < timeWindow
+    );
+    
+    // Find context switches
+    for (let i = 1; i < relevantHistory.length; i++) {
+      if (relevantHistory[i].context !== relevantHistory[i-1].context) {
+        switches.push({
+          from: relevantHistory[i-1].context,
+          to: relevantHistory[i].context,
+          timestamp: relevantHistory[i].timestamp,
+          fromUrl: relevantHistory[i-1].url,
+          toUrl: relevantHistory[i].url
+        });
+      }
+    }
+    
+    return switches;
+  }
+  
+  /**
+   * Get current context streak (consecutive entries with same context)
+   */
+  async getCurrentContextStreak(): Promise<number> {
+    const { contextHistory } = await getStorage(["contextHistory"]);
+    if (!contextHistory || contextHistory.length === 0) {
+      return 0;
+    }
+    
+    const currentContext = contextHistory[contextHistory.length - 1].context;
+    let streak = 1;
+    
+    // Count backwards from most recent
+    for (let i = contextHistory.length - 2; i >= 0; i--) {
+      if (contextHistory[i].context === currentContext) {
+        streak++;
+      } else {
+        break;
+      }
+    }
+    
+    return streak;
+  }
+  
+  /**
+   * Check if focus is lost based on context switches
+   */
+  async isLostFocus(switchThreshold: number = 5, timeWindowMinutes: number = 15): Promise<boolean> {
+    const switches = await this.getContextSwitches(timeWindowMinutes);
+    
+    // Check number of switches
+    if (switches.length >= switchThreshold) {
+      // Check if switching between different contexts
+      const contexts = new Set(switches.map(s => s.to));
+      if (contexts.size >= 3) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Get latest context
+   */
+  getLatestContext(): string {
+    return this.latestContext;
+  }
+  
+  /**
+   * Get latest URL
+   */
+  getLatestUrl(): string {
+    return this.latestUrl;
+  }
+}
+
+# ./src/lib/contextEngine/index.ts
+################################################################################
+import { PageData, ContextResult } from "../../types/index";
+import { analyzeText } from "./textAnalyzer";
+import { analyzeUrl, getDomainCategory, extractDomain } from "./urlAnalyzer";
+import { TextClassifier } from "./embeddingClassifier";
+import { ContextTracker } from "./contextHistory";
+
+// Singleton instances
+const textClassifier = new TextClassifier();
+const contextTracker = new ContextTracker();
+
+// Initialize the engine
+let initialized = false;
+
+/**
+ * Initialize the context engine
+ */
+export async function initializeContextEngine(): Promise<void> {
+  if (initialized) return;
+  
+  try {
+    // Initialize text classifier
+    await textClassifier.initialize();
+    console.log("[Context] Context engine initialized successfully");
+    initialized = true;
+  } catch (error) {
+    console.error("[Context] Failed to initialize context engine:", error);
+    // Continue anyway, will use fallback methods
+  }
+}
+
+/**
+ * Extract metadata from the document
+ */
+export function extractMetadata(): { description: string, keywords: string[] } {
+  let description = "";
+  let keywords: string[] = [];
+  
+  // Get meta description
+  const descEl = document.querySelector('meta[name="description"]');
+  if (descEl) {
+    description = descEl.getAttribute('content') || "";
+  }
+  
+  // Get meta keywords
+  const keywordsEl = document.querySelector('meta[name="keywords"]');
+  if (keywordsEl) {
+    const keywordText = keywordsEl.getAttribute('content') || "";
+    keywords = keywordText.split(',').map(k => k.trim());
+  }
+  
+  return { description, keywords };
+}
+
+/**
+ * Extract page data for context analysis
+ */
+export function extractPageData(): PageData {
+  const metadata = extractMetadata();
+  const domain = extractDomain(window.location.href);
+  
+  return {
+    url: window.location.href,
+    title: document.title,
+    fullText: document.body.innerText || "",
+    metaDescription: metadata.description,
+    metaKeywords: metadata.keywords,
+    domainCategory: getDomainCategory(domain)
+  };
+}
+
+/**
+ * Combine scores with weights
+ */
+function combineScores(
+  textScores: Record<string, number>,
+  urlScores: Record<string, number>,
+  domainCategory?: string
+): Record<string, number> {
+  const combinedScores: Record<string, number> = { ...textScores };
+  
+  // Add URL scores with lower weight
+  for (const [context, score] of Object.entries(urlScores)) {
+    combinedScores[context] = (combinedScores[context] || 0) + (score * 0.3);
+  }
+  
+  // Boost domain category if available
+  if (domainCategory && combinedScores[domainCategory]) {
+    combinedScores[domainCategory] = combinedScores[domainCategory] * 1.3;
+  }
+  
+  return combinedScores;
+}
+
+/**
+ * Convert scores to final result
+ */
+function formatResult(scores: Record<string, number>): ContextResult {
+  // Sort contexts by score
+  const sortedContexts = Object.entries(scores)
+    .filter(([_, score]) => score > 0)
+    .sort((a, b) => b[1] - a[1]);
+  
+  if (sortedContexts.length === 0) {
+    return {
+      primaryContext: "General",
+      confidence: 1,
+      secondaryContexts: []
+    };
+  }
+  
+  // Get primary and secondary contexts
+  const [primaryContext, primaryScore] = sortedContexts[0];
+  const secondaryContexts = sortedContexts.slice(1, 4).map(([context, score]) => ({
+    context,
+    confidence: score
+  }));
+  
+  return {
+    primaryContext,
+    confidence: primaryScore,
+    secondaryContexts,
+    features: scores
+  };
+}
+
+/**
+ * Classify page context
+ */
+export async function classifyPageContext(pageData: PageData): Promise<ContextResult> {
+  // Ensure engine is initialized
+  if (!initialized) {
+    await initializeContextEngine();
+  }
+  
+  // Get scores from different sources
+  const textScores = await textClassifier.classify(pageData.fullText);
+  const urlScores = analyzeUrl(pageData.url);
+  
+  // Combine scores
+  const combinedScores = combineScores(textScores, urlScores, pageData.domainCategory);
+  
+  // Format result
+  const result = formatResult(combinedScores);
+  
+  // Enable context tracking
+  await contextTracker.addContext(
+    result.primaryContext, 
+    pageData.url, 
+    result.confidence
+  );
+  
+  return result;
+}
+
+/**
+ * Get context tracker instance
+ */
+export function getContextTracker(): ContextTracker {
+  return contextTracker;
+}
+
+# ./src/lib/windows/focusWindow.ts
+################################################################################
+let focusWindowId: number | undefined;
+
+/**
+ * Create a dedicated window for the focus session
+ * This creates a new window that can be populated with productive tabs
+ */
+export async function launchFocusWindow(): Promise<number | undefined> {
+  try {
+    // Check if focus window already exists
+    if (focusWindowId !== undefined) {
+      try {
+        // Try to get window to verify it still exists
+        await chrome.windows.get(focusWindowId);
+        return focusWindowId; // Window already exists
+      } catch (error) {
+        // Window doesn't exist anymore, reset the ID
+        focusWindowId = undefined;
+      }
+    }
+
+    // Create a new window
+    const { id } = await chrome.windows.create({
+      url: "about:blank",
+      type: "normal",
+      state: "maximized"
+    });
+    
+    focusWindowId = id;
+    
+    // Create a welcoming tab
+    if (id) {
+      const tabs = await chrome.tabs.query({ windowId: id });
+      
+      // If there's at least one tab (the default about:blank), update it
+      if (tabs.length > 0 && tabs[0].id) {
+        await chrome.tabs.update(tabs[0].id, { 
+          url: chrome.runtime.getURL("blocked.html") + "?mode=welcome" 
+        });
+      }
+    }
+    
+    return focusWindowId;
+  } catch (error) {
+    console.error("Error launching focus window:", error);
+    return undefined;
+  }
+}
+
+/**
+ * Close the dedicated focus window
+ */
+export async function closeFocusWindow(): Promise<void> {
+  if (focusWindowId === undefined) return;
+  
+  try {
+    await chrome.windows.remove(focusWindowId);
+    focusWindowId = undefined;
+  } catch (error) {
+    console.error("Error closing focus window:", error);
+    // Reset the ID even if there was an error
+    focusWindowId = undefined;
+  }
+}
+
+/**
+ * Check if the focus window is active
+ */
+export function getFocusWindowId(): number | undefined {
+  return focusWindowId;
+}
+
+/**
+ * Move a tab to the focus window
+ */
+export async function moveTabToFocusWindow(tabId: number): Promise<boolean> {
+  if (focusWindowId === undefined) {
+    const windowId = await launchFocusWindow();
+    if (windowId === undefined) return false;
+  }
+  
+  try {
+    await chrome.tabs.move(tabId, { windowId: focusWindowId!, index: -1 });
+    return true;
+  } catch (error) {
+    console.error("Error moving tab to focus window:", error);
+    return false;
+  }
+} 
+
+# ./src/lib/panels/sidePanelManager.ts
+################################################################################
+/**
+ * Open the side panel in the current window
+ */
+export async function openSidePanel(): Promise<void> {
+  try {
+    const currentWindow = await chrome.windows.getCurrent();
+    await chrome.sidePanel.open({ windowId: currentWindow.id });
+    console.log("Side panel opened successfully");
+  } catch (error) {
+    console.error("Error opening side panel:", error);
+  }
+}
+
+/**
+ * Close the side panel in all windows
+ */
+export async function closeSidePanel(): Promise<void> {
+  try {
+    const panels = await chrome.sidePanel.getAll();
+    await Promise.all(panels.map((panel: chrome.sidePanel.PanelInfo) => 
+      chrome.sidePanel.close({ windowId: panel.windowId })
+    ));
+    console.log("Side panels closed successfully");
+  } catch (error) {
+    console.error("Error closing side panels:", error);
+  }
+}
+
+/**
+ * Set the side panel properties
+ */
+export async function setSidePanelProperties(path: string, title: string): Promise<void> {
+  try {
+    await chrome.sidePanel.setOptions({
+      path,
+      enabled: true
+    });
+    console.log("Side panel properties updated");
+  } catch (error) {
+    console.error("Error setting side panel properties:", error);
+  }
+} 
+
+# ./src/lib/ui/tooltips.ts
+################################################################################
+/**
+ * Super‑light tooltip helper – any element with `[data-tip]` gets a hover hint.
+ */
+
+const tip = document.createElement("div");
+tip.style.cssText = `
+  position:fixed;pointer-events:none;z-index:2147483646;
+  background:#333;color:#fff;padding:6px 10px;border-radius:4px;
+  font-size:12px;font-family:Arial;opacity:0;transition:opacity .15s`;
+document.addEventListener("DOMContentLoaded", () => document.body.appendChild(tip));
+
+let active = false;
+
+function show(e: MouseEvent) {
+  const el = e.target as HTMLElement;
+  const msg = el?.getAttribute("data-tip");
+  if (!msg) return;
+  tip.textContent = msg;
+  const rect = el.getBoundingClientRect();
+  tip.style.top = `${rect.bottom + 8 + window.scrollY}px`;
+  tip.style.left = `${rect.left + rect.width / 2 - tip.offsetWidth / 2 + window.scrollX}px`;
+  tip.style.opacity = "1";
+  active = true;
+}
+
+function hide() {
+  if (!active) return;
+  tip.style.opacity = "0";
+  active = false;
+}
+
+document.addEventListener("mouseover", show);
+document.addEventListener("mouseout", hide); 
+
+# ./src/popup/popup.html
+################################################################################
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Focus</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      width: 320px;
+      padding: 16px;
+      margin: 0;
+      color: #333;
+    }
+    
+    h1 {
+      font-size: 24px;
+      margin: 0 0 16px;
+      text-align: center;
+      color: #1565c0;
+    }
+    
+    p {
+      margin: 8px 0 16px;
+    }
+    
+    label {
+      display: block;
+      margin: 8px 0;
+    }
+    
+    input[type="number"] {
+      padding: 8px;
+      width: 60px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    
+    button {
+      background: #1565c0;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 10px 16px;
+      font-size: 16px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 16px;
+    }
+    
+    button:hover {
+      background: #0D47A1;
+    }
+    
+    #contextList {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin: 16px 0;
+    }
+    
+    .context-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    #allowedTags {
+      font-weight: bold;
+    }
+    
+    #countdown {
+      font-size: 18px;
+      font-weight: bold;
+      text-align: center;
+      margin: 16px 0;
+    }
+    
+    #endBtn {
+      background: #d32f2f;
+    }
+    
+    #endBtn:hover {
+      background: #b71c1c;
+    }
+  </style>
+</head>
+<body>
+  <h1>Focus</h1>
+
+  <section id="inactiveUI">
+    <p>Select the contexts you need right now:</p>
+    <div id="contextList">
+      <!-- Context checkboxes will be populated by JS -->
+    </div>
+    <label>
+      ⏱ Duration (min, optional):
+      <input id="duration" type="number" min="1" placeholder="∞">
+    </label>
+    <button id="startBtn">Start Focus</button>
+  </section>
+
+  <section id="activeUI" hidden>
+    <p>Focusing on: <span id="allowedTags"></span></p>
+    <p id="countdown"></p>
+    <button id="endBtn">End Focus</button>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+
+# ./src/popup/popup.ts
+################################################################################
+/**
+ * Simplified popup for the Focus extension
+ * 
+ * This popup allows users to select which contexts they want to focus on
+ * and optionally set a timer duration. Everything else is blocked.
+ */
+
+import { getFocusState } from "../api/storageApi";
+
+// DOM Elements
+const inactiveUI = document.getElementById('inactiveUI') as HTMLElement;
+const activeUI = document.getElementById('activeUI') as HTMLElement;
+const contextList = document.getElementById('contextList') as HTMLElement;
+const durationInput = document.getElementById('duration') as HTMLInputElement;
+const startBtn = document.getElementById('startBtn') as HTMLButtonElement;
+const endBtn = document.getElementById('endBtn') as HTMLButtonElement;
+const allowedTags = document.getElementById('allowedTags') as HTMLElement;
+const countdown = document.getElementById('countdown') as HTMLElement;
+
+// Available contexts
+const AVAILABLE_CONTEXTS = [
+  'Work',
+  'Development',
+  'Research',
+  'Learning',
+  'Entertainment',
+  'Social', 
+  'Shopping',
+  'News'
+];
+
+// Initialize the popup
+async function initPopup() {
+  // Render context checkboxes
+  renderContextList();
+  
+  // Check current focus state
+  const focusState = await getFocusState();
+  
+  if (focusState.active) {
+    // Show active UI
+    renderActive(focusState);
+  } else {
+    // Show inactive UI
+    renderInactive();
+  }
+  
+  // Setup event listeners
+  setupEventListeners();
+  
+  // Start polling for updates (to update the countdown)
+  startPolling();
+}
+
+// Render the list of contexts as checkboxes
+function renderContextList() {
+  contextList.innerHTML = '';
+  
+  AVAILABLE_CONTEXTS.forEach(context => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'context-checkbox';
+    
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.value = context;
+    input.id = `context-${context}`;
+    input.className = 'context-checkbox-input';
+    
+    const label = document.createElement('label');
+    label.textContent = context;
+    label.htmlFor = `context-${context}`;
+    
+    wrapper.appendChild(input);
+    wrapper.appendChild(label);
+    contextList.appendChild(wrapper);
+  });
+}
+
+// Show the inactive UI (start focus)
+function renderInactive() {
+  inactiveUI.hidden = false;
+  activeUI.hidden = true;
+}
+
+// Show the active UI (end focus)
+function renderActive(focusState: any) {
+  inactiveUI.hidden = true;
+  activeUI.hidden = false;
+  
+  // Show allowed contexts
+  allowedTags.textContent = focusState.allowedContexts.join(', ');
+  
+  // Show countdown if there's a timer
+  updateCountdown(focusState);
+}
+
+// Update the countdown timer
+function updateCountdown(focusState: any) {
+  if (!focusState.endTime) {
+    countdown.textContent = 'No time limit';
+    return;
+  }
+  
+  const now = Date.now();
+  const timeLeft = Math.max(0, focusState.endTime - now);
+  
+  if (timeLeft <= 0) {
+    countdown.textContent = 'Time expired';
+    return;
+  }
+  
+  // Format as MM:SS
+  const minutes = Math.floor(timeLeft / 60000);
+  const seconds = Math.floor((timeLeft % 60000) / 1000);
+  
+  countdown.textContent = `${minutes}:${seconds.toString().padStart(2, '0')} remaining`;
+}
+
+// Setup event listeners
+function setupEventListeners() {
+  // Start Focus button
+  startBtn.addEventListener('click', () => {
+    // Get selected contexts
+    const selectedCheckboxes = document.querySelectorAll<HTMLInputElement>('.context-checkbox-input:checked');
+    const allowedContexts = Array.from(selectedCheckboxes).map(cb => cb.value);
+    
+    if (allowedContexts.length === 0) {
+      alert('Please select at least one context to focus on');
+      return;
+    }
+    
+    // Get duration (if any)
+    const duration = durationInput.value ? parseInt(durationInput.value, 10) : undefined;
+    
+    // Calculate blocked categories
+    const blockedCategories = AVAILABLE_CONTEXTS.filter(c => !allowedContexts.includes(c));
+    
+    // Start focus session with correct format
+    chrome.runtime.sendMessage({
+      type: 'START_FOCUS_SESSION',
+      payload: {
+        blockedCategories: blockedCategories,
+        durationMinutes: duration
+      }
+    }, () => {
+      // Refresh the popup after starting
+      window.location.reload();
+    });
+  });
+  
+  // End Focus button
+  endBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({
+      type: 'END_FOCUS_SESSION'
+    }, () => {
+      // Refresh the popup after ending
+      window.location.reload();
+    });
+  });
+}
+
+// Poll for updates (for countdown)
+function startPolling() {
+  setInterval(async () => {
+    const focusState = await getFocusState();
+    
+    if (focusState.active && !activeUI.hidden) {
+      updateCountdown(focusState);
+    }
+  }, 1000);
+}
+
+// Initialize when DOM is loaded
+document.addEventListener('DOMContentLoaded', initPopup);
+
+# ./src/options/options.html
+################################################################################
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Context Focus - Options</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+      }
+      h1 {
+        color: #333;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 10px;
+      }
+      h2 {
+        margin-top: 30px;
+        color: #444;
+      }
+      .option-group {
+        margin-bottom: 30px;
+        padding: 15px;
+        background-color: #f9f9f9;
+        border-radius: 5px;
+      }
+      label {
+        display: block;
+        margin-bottom: 15px;
+      }
+      input[type="checkbox"] {
+        margin-right: 10px;
+      }
+      input[type="number"] {
+        width: 60px;
+        padding: 5px;
+      }
+      button {
+        background-color: #4CAF50;
+        color: white;
+        padding: 10px 15px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+      }
+      button:hover {
+        background-color: #45a049;
+      }
+      .context-categories {
+        margin-top: 20px;
+      }
+      .context-card {
+        background-color: white;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 15px;
+        margin-bottom: 10px;
+      }
+      .context-card h3 {
+        margin-top: 0;
+      }
+      .options-section {
+        margin-bottom: 30px;
+        padding: 15px;
+        background-color: #f9f9f9;
+        border-radius: 5px;
+      }
+      .section-info {
+        color: #666;
+        margin-bottom: 15px;
+      }
+      .list-container {
+        background-color: white;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 15px;
+        margin-bottom: 15px;
+        max-height: 300px;
+        overflow-y: auto;
+      }
+      .empty-state {
+        color: #999;
+        font-style: italic;
+        text-align: center;
+        padding: 20px;
+      }
+      .action-buttons {
+        display: flex;
+        gap: 10px;
+      }
+      .action-btn {
+        flex: 1;
+        padding: 8px 12px;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+      }
+      .primary {
+        background-color: #2196F3;
+        color: white;
+      }
+      .secondary {
+        background-color: #f44336;
+        color: white;
+      }
+      .save-btn {
+        display: block;
+        margin: 30px auto;
+        padding: 12px 25px;
+        font-size: 18px;
+      }
+      .parked-link-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background-color: #f5f5f5;
+        padding: 10px;
+        margin-bottom: 8px;
+        border-radius: 4px;
+      }
+      .link-title {
+        font-weight: bold;
+        margin-right: 10px;
+      }
+      .link-url {
+        color: #666;
+        font-size: 0.9em;
+        word-break: break-all;
+      }
+      .link-remove {
+        background: none;
+        border: none;
+        color: #f44336;
+        cursor: pointer;
+        font-size: 1.2em;
+        padding: 0 5px;
+      }
+      .override-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background-color: #f5f5f5;
+        padding: 10px;
+        margin-bottom: 8px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Context Focus - Options</h1>
+    
+    <div class="option-group">
+      <h2>Extension Options</h2>
+      <label>
+        <input type="checkbox" id="extensionEnabledCheckbox" />
+        Enable Context Focus extension
+      </label>
+    </div>
+    
+    <div class="option-group">
+      <h2>Focus Settings</h2>
+      <label>
+        <input type="checkbox" id="notificationsCheckbox" />
+        Show notifications when losing focus
+      </label>
+      
+      <label>
+        Context switch threshold:
+        <input type="number" id="switchThresholdInput" min="2" max="20" />
+        <span>(Number of context switches that trigger a focus alert)</span>
+      </label>
+      
+      <label>
+        Time window (minutes):
+        <input type="number" id="timeWindowInput" min="5" max="60" />
+        <span>(Period to monitor for context switches)</span>
+      </label>
+    </div>
+    
+    <div class="option-group context-categories">
+      <h2>Context Categories</h2>
+      <p>These are the categories used to classify page context:</p>
+      
+      <div class="context-card">
+        <h3>Work</h3>
+        <p>Productivity apps, email, documents, meetings, project management</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Learning</h3>
+        <p>Educational content, courses, tutorials, learning platforms</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Entertainment</h3>
+        <p>Movies, videos, games, music, streaming services</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>News</h3>
+        <p>News sites, current events, breaking stories</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Shopping</h3>
+        <p>Online stores, e-commerce, product reviews</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Social</h3>
+        <p>Social media, messaging, forums, communities</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Research</h3>
+        <p>Academic resources, scientific papers, research databases</p>
+      </div>
+      
+      <div class="context-card">
+        <h3>Development</h3>
+        <p>Programming, coding, software development, technical docs</p>
+      </div>
+    </div>
+    
+    <!-- Sub-URL Overrides Section -->
+    <div class="option-group">
+      <h2>Sub-URL Overrides</h2>
+      <p>Reclassify specific subpaths to different contexts. This is helpful for sites with mixed content (like Reddit).</p>
+      
+      <div id="subUrlOverridesList" style="margin-bottom: 15px;"></div>
+      
+      <div style="display: flex; margin-bottom: 10px;">
+        <input type="text" id="overrideUrlInput" placeholder="reddit.com/r/AskHistorians" style="flex: 2; padding: 8px; margin-right: 10px;" />
+        <select id="overrideContextSelect" style="flex: 1; padding: 8px;">
+          <option value="Work">Work</option>
+          <option value="Learning">Learning</option>
+          <option value="Entertainment">Entertainment</option>
+          <option value="News">News</option>
+          <option value="Shopping">Shopping</option>
+          <option value="Social">Social</option>
+          <option value="Research">Research</option>
+          <option value="Development">Development</option>
+        </select>
+      </div>
+      
+      <button id="addOverrideBtn" style="background-color: #2196F3;">Add Override</button>
+    </div>
+    
+    <!-- Later List / Parked Links Section -->
+    <div class="option-group" id="parkedLinksSection">
+      <h2>Later List</h2>
+      <p class="section-info">Links you've saved to revisit after your focus session.</p>
+      
+      <div id="parkedLinksList" class="list-container">
+        <div class="empty-state">No links have been parked yet.</div>
+      </div>
+      
+      <div class="action-buttons">
+        <button id="releaseParkedBtn" class="action-btn primary">Open All Links</button>
+        <button id="clearParkedBtn" class="action-btn secondary">Clear List</button>
+      </div>
+    </div>
+    
+    <div class="action-buttons" style="margin-top: 30px;">
+      <button id="saveBtn" class="save-btn">Save Settings</button>
+      <button id="resetBtn" style="background-color: #f44336;">Reset to Defaults</button>
+    </div>
+    
+    <script src="options.js"></script>
+  </body>
+</html>
+
+# ./src/options/options.ts
+################################################################################
+import { getStorage, setStorage } from "../api/storageApi";
+import { FocusSettings } from "../types/index";
+import { getParkedLinks, releaseParkedLinks, clearParkedLinks } from "../api/parkedLinksApi";
+
+// DOM Elements
+const extensionEnabledCheckbox = document.getElementById("extensionEnabledCheckbox") as HTMLInputElement;
+const notificationsCheckbox = document.getElementById("notificationsCheckbox") as HTMLInputElement;
+const switchThresholdInput = document.getElementById("switchThresholdInput") as HTMLInputElement;
+const timeWindowInput = document.getElementById("timeWindowInput") as HTMLInputElement;
+const saveBtn = document.getElementById("saveBtn") as HTMLButtonElement;
+const resetBtn = document.getElementById("resetBtn") as HTMLButtonElement;
+const subUrlOverridesList = document.getElementById("subUrlOverridesList") as HTMLDivElement;
+const overrideUrlInput = document.getElementById("overrideUrlInput") as HTMLInputElement;
+const overrideContextSelect = document.getElementById("overrideContextSelect") as HTMLSelectElement;
+const addOverrideBtn = document.getElementById("addOverrideBtn") as HTMLButtonElement;
+
+// Parked Links UI Elements
+const parkedLinksList = document.getElementById("parkedLinksList") as HTMLDivElement;
+const releaseParkedBtn = document.getElementById("releaseParkedBtn") as HTMLButtonElement;
+const clearParkedBtn = document.getElementById("clearParkedBtn") as HTMLButtonElement;
+
+// Default focus settings
+const DEFAULT_FOCUS_SETTINGS: FocusSettings = {
+  enabled: true,
+  notificationsEnabled: true,
+  switchThreshold: 3,
+  timeWindowMinutes: 30
+};
+
+// Initialize UI
+document.addEventListener("DOMContentLoaded", initializeOptions);
+
+async function initializeOptions() {
+  const storage = await getStorage([
+    "extensionEnabled", 
+    "focusSettings",
+    "subUrlOverrides",
+    "parkedLinks"
+  ]);
+  
+  // Extension enabled/disabled
+  extensionEnabledCheckbox.checked = storage.extensionEnabled ?? true;
+  
+  // Focus Settings
+  const focusSettings = storage.focusSettings || DEFAULT_FOCUS_SETTINGS;
+  notificationsCheckbox.checked = focusSettings.notificationsEnabled ?? true;
+  switchThresholdInput.value = focusSettings.switchThreshold?.toString() || "3";
+  timeWindowInput.value = focusSettings.timeWindowMinutes?.toString() || "30";
+  
+  // Add event listeners
+  saveBtn.addEventListener("click", saveOptions);
+  resetBtn.addEventListener("click", resetOptions);
+  
+  // Load URL overrides
+  displayUrlOverrides(storage.subUrlOverrides || {});
+  addOverrideBtn.addEventListener("click", addNewOverride);
+  
+  // Load parked links
+  await displayParkedLinks(storage.parkedLinks || []);
+  
+  // Setup parked links actions
+  if (releaseParkedBtn) {
+    releaseParkedBtn.addEventListener("click", handleReleaseParkedLinks);
+  }
+  
+  if (clearParkedBtn) {
+    clearParkedBtn.addEventListener("click", handleClearParkedLinks);
+  }
+}
+
+function getDefaultFocusSettings(): FocusSettings {
+  return {
+    enabled: true,
+    notificationsEnabled: true,
+    switchThreshold: 3,
+    timeWindowMinutes: 30
+  };
+}
+
+async function saveOptions() {
+  const focusSettings: FocusSettings = {
+    enabled: true,
+    notificationsEnabled: notificationsCheckbox.checked,
+    switchThreshold: parseInt(switchThresholdInput.value) || 3,
+    timeWindowMinutes: parseInt(timeWindowInput.value) || 30
+  };
+  
+  // Collect URL Overrides from UI
+  const subUrlOverrides: Record<string, string> = {};
+  const overrideItems = subUrlOverridesList.querySelectorAll(".override-item");
+  overrideItems.forEach(item => {
+    const urlSpan = item.querySelector(".override-url") as HTMLSpanElement;
+    const contextSpan = item.querySelector(".override-context") as HTMLSpanElement;
+    if (urlSpan && contextSpan) {
+      subUrlOverrides[urlSpan.textContent || ""] = contextSpan.textContent || "";
+    }
+  });
+  
+  // Update storage with new settings
+  await setStorage({
+    extensionEnabled: extensionEnabledCheckbox.checked,
+    focusSettings,
+    subUrlOverrides
+  });
+  
+  // Show success notification
+  showNotification("Options saved!");
+}
+
+function showNotification(message: string, duration = 2000) {
+  const notification = document.createElement("div");
+  notification.textContent = message;
+  notification.style.position = "fixed";
+  notification.style.bottom = "20px";
+  notification.style.right = "20px";
+  notification.style.backgroundColor = "#4CAF50";
+  notification.style.color = "white";
+  notification.style.padding = "10px 20px";
+  notification.style.borderRadius = "4px";
+  notification.style.zIndex = "1000";
+  
+  document.body.appendChild(notification);
+  
+  setTimeout(() => {
+    notification.remove();
+  }, duration);
+}
+
+async function resetOptions() {
+  // Reset UI to defaults
+  extensionEnabledCheckbox.checked = true;
+  const defaultSettings = getDefaultFocusSettings();
+  notificationsCheckbox.checked = defaultSettings.notificationsEnabled;
+  switchThresholdInput.value = defaultSettings.switchThreshold.toString();
+  timeWindowInput.value = defaultSettings.timeWindowMinutes.toString();
+  
+  // Clear URL overrides
+  subUrlOverridesList.innerHTML = '';
+  
+  // Save defaults
+  await setStorage({
+    extensionEnabled: true,
+    focusSettings: defaultSettings,
+    subUrlOverrides: {}
+  });
+  
+  showNotification("Options reset to defaults");
+}
+
+// URL Overrides UI Functions
+function displayUrlOverrides(overrides: Record<string, string>) {
+  subUrlOverridesList.innerHTML = '';
+  
+  if (Object.keys(overrides).length === 0) {
+    const emptyMsg = document.createElement('div');
+    emptyMsg.className = 'empty-state';
+    emptyMsg.textContent = 'No URL overrides configured yet.';
+    subUrlOverridesList.appendChild(emptyMsg);
+    return;
+  }
+  
+  Object.entries(overrides).forEach(([url, context]) => {
+    addOverrideItem(url, context);
+  });
+}
+
+function addNewOverride() {
+  const url = overrideUrlInput.value.trim();
+  const context = overrideContextSelect.value;
+  
+  if (!url) {
+    showNotification("Please enter a URL", 3000);
+    return;
+  }
+  
+  addOverrideItem(url, context);
+  overrideUrlInput.value = '';
+}
+
+function addOverrideItem(url: string, context: string) {
+  const item = document.createElement('div');
+  item.className = 'override-item';
+  
+  const urlSpan = document.createElement('span');
+  urlSpan.className = 'override-url';
+  urlSpan.textContent = url;
+  
+  const contextSpan = document.createElement('span');
+  contextSpan.className = 'override-context';
+  contextSpan.textContent = context;
+  
+  const deleteButton = document.createElement('button');
+  deleteButton.innerHTML = '&times;';
+  deleteButton.className = 'link-remove';
+  deleteButton.addEventListener('click', () => {
+    item.remove();
+  });
+  
+  item.appendChild(urlSpan);
+  item.appendChild(contextSpan);
+  item.appendChild(deleteButton);
+  
+  subUrlOverridesList.appendChild(item);
+}
+
+// Parked Links UI Functions
+async function displayParkedLinks(parkedLinks: Array<{url: string, title?: string, timestamp: number}>) {
+  if (!parkedLinksList) return;
+  
+  parkedLinksList.innerHTML = '';
+  
+  if (!parkedLinks || parkedLinks.length === 0) {
+    const emptyMsg = document.createElement('div');
+    emptyMsg.className = 'empty-state';
+    emptyMsg.textContent = 'No links have been parked yet.';
+    parkedLinksList.appendChild(emptyMsg);
+    return;
+  }
+  
+  parkedLinks.forEach(link => {
+    const linkItem = document.createElement('div');
+    linkItem.className = 'parked-link-item';
+    
+    const linkInfo = document.createElement('div');
+    
+    const title = document.createElement('div');
+    title.className = 'link-title';
+    title.textContent = link.title || 'Untitled';
+    
+    const url = document.createElement('div');
+    url.className = 'link-url';
+    url.textContent = link.url;
+    
+    linkInfo.appendChild(title);
+    linkInfo.appendChild(url);
+    
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'link-remove';
+    removeBtn.innerHTML = '&times;';
+    removeBtn.addEventListener('click', async () => {
+      await removeParkedLink(link.url);
+      linkItem.remove();
+      
+      // If this was the last item, show empty state
+      if (parkedLinksList.children.length === 0) {
+        await displayParkedLinks([]);
+      }
+    });
+    
+    linkItem.appendChild(linkInfo);
+    linkItem.appendChild(removeBtn);
+    
+    parkedLinksList.appendChild(linkItem);
+  });
+}
+
+async function removeParkedLink(url: string) {
+  const { parkedLinks } = await getStorage(['parkedLinks']);
+  
+  if (parkedLinks) {
+    const updatedLinks = parkedLinks.filter(link => link.url !== url);
+    await setStorage({ parkedLinks: updatedLinks });
+  }
+}
+
+async function handleReleaseParkedLinks() {
+  try {
+    await releaseParkedLinks();
+    await displayParkedLinks([]);
+    showNotification("All links have been opened in new tabs");
+  } catch (error) {
+    console.error("Error releasing parked links:", error);
+    showNotification("Error opening links", 3000);
+  }
+}
+
+async function handleClearParkedLinks() {
+  if (confirm("Are you sure you want to clear all parked links?")) {
+    await clearParkedLinks();
+    await displayParkedLinks([]);
+    showNotification("All parked links have been cleared");
+  }
+}
+
+# ./src/options/options.css
+################################################################################
+/* Add these styles at an appropriate location in the CSS file */
+
+/* Parked Links Section */
+#parkedLinksSection {
+  margin-top: 30px;
+}
+
+.parked-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  background-color: #f5f5f5;
+  position: relative;
+}
+
+.parked-item:hover {
+  background-color: #e9e9e9;
+}
+
+.link-title {
+  flex: 2;
+  font-weight: 500;
+  text-decoration: none;
+  color: #0066cc;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 10px;
+}
+
+.link-title:hover {
+  text-decoration: underline;
+}
+
+.link-context {
+  flex: 1;
+  color: #666;
+  font-size: 0.9em;
+  text-align: center;
+  max-width: 100px;
+}
+
+.link-date {
+  flex: 1;
+  color: #666;
+  font-size: 0.9em;
+  text-align: right;
+}
+
+.action-buttons {
+  margin-top: 15px;
+  display: flex;
+  gap: 10px;
+}
+
+.action-btn {
+  padding: 8px 15px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.action-btn.primary {
+  background-color: #0066cc;
+  color: white;
+}
+
+.action-btn.primary:hover {
+  background-color: #0055aa;
+}
+
+.action-btn.secondary {
+  background-color: #e0e0e0;
+  color: #333;
+}
+
+.action-btn.secondary:hover {
+  background-color: #d0d0d0;
+}
+
+.empty-state {
+  color: #666;
+  font-style: italic;
+  padding: 15px;
+  text-align: center;
+  background-color: #f9f9f9;
+  border-radius: 4px;
+  margin: 10px 0;
+} 
+
+# ./src/background/index.ts
+################################################################################
+import { groupTabByContext, onTabRemoved, ungroupAllTabs } from "../api/tabsApi";
+import { getStorage, setStorage, getFocusState, setFocusState } from "../api/storageApi";
+import { checkFocusStatus, showFocusNotification } from "../api/focusApi";
+import { restoreWorkspace } from "../api/focusSessionManager";
+import { classifyPageContext } from "../lib/contextEngine";
+import { extractDomain } from "../lib/contextEngine/urlAnalyzer";
+import { saveForLater, releaseParkedLinks, goBackOrClose } from "../api/parkedLinksApi";
+import * as focusEngine from "../lib/focusEngine";
+
+const tabContextMap: Record<number, string> = {};
+const BLOCKED_PAGE_URL = chrome.runtime.getURL("blocked.html");
+
+/**
+ * Initialize the extension with proper default settings
+ */
+async function initExtension(): Promise<void> {
+  // Always enable the extension
+  await setStorage({ extensionEnabled: true });
+  
+  console.log("[Background] Extension enabled.");
+  
+  // Check for active sessions - now using the new focusState
+  const focusState = await getFocusState();
+  if (focusState.active) {
+    console.log("[Background] Focus session was active at shutdown, verifying...");
+    // Verify session is still valid (not expired)
+    if (!focusState.endTime || focusState.endTime <= Date.now()) {
+      console.log("[Background] Focus session expired during shutdown, cleaning up");
+      await setFocusState({ active: false, endTime: undefined });
+    } else {
+      console.log(`[Background] Focus session continues until ${new Date(focusState.endTime).toLocaleTimeString()}`);
+    }
+  }
+  
+  // Setup URL blocking for Focus Session - always setup the handler
+  setupFocusSessionUrlBlocking();
+  
+  // Set up periodic checks
+  setupPeriodicChecks();
+}
+
+/**
+ * Set up all periodic checks needed for the extension
+ */
+function setupPeriodicChecks() {
+  // Periodic check for session end
+  setInterval(checkFocusSessionStatus, 30000); // check every 30s
+  
+  // More frequent check for focus loss during active sessions
+  setInterval(async () => {
+    try {
+      const isSessionActive = await focusEngine.isActive();
+      if (isSessionActive) {
+        const focusStatus = await checkFocusStatus();
+        if (focusStatus.isLostFocus) {
+          // Immediately send a drift warning if focus is lost
+          await sendDriftWarning(focusStatus);
+        }
+        // Update badge regardless
+        updateBadge();
+      }
+    } catch (err) {
+      console.error("Error in focus check interval:", err);
+    }
+  }, 10000); // Check every 10 seconds during active sessions
+}
+
+/**
+ * Handle messages from content scripts and the UI
+ */
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.type === "CONTEXT_UPDATE" || request.type === "CONTEXT_DETECTED") {
+    const context = request.context as string;
+    const tabId = sender.tab?.id;
+    
+    if (tabId != null) {
+      // Check if context has changed
+      const previousContext = tabContextMap[tabId];
+      if (previousContext !== context) {
+        // Notify focus mode about context change
+        // handleContextChange(context);
+      }
+      
+      tabContextMap[tabId] = context;
+      
+      // Store additional context data if available
+      const contextData = {
+        context,
+        confidence: request.confidence,
+        secondaryContexts: request.secondaryContexts,
+        url: request.url
+      };
+      
+      // Save context data to storage for URL blocking functionality
+      chrome.storage.local.set({
+        [request.url]: { context: request.context, confidence: request.confidence }
+      });
+      
+      // Handle the context update
+      handleContextUpdate(tabId, context, contextData).catch((err) => console.error(err));
+    }
+    
+    return false; // No response needed
+  } 
+  else if (request.type === "FOCUS_TOGGLE") {
+    toggleFocusMode(request.enabled).catch((err) => console.error(err));
+    return false; // No response needed
+  }
+  else if (request.type === "START_FOCUS_SESSION") {
+    const { durationMinutes, blockedCategories } = request.payload || {};
+    
+    const KNOWN_CONTEXTS = [
+      "Work", "Development", "Research", "Learning",
+      "Entertainment", "Social", "Shopping", "News"
+    ];
+    const allowedContexts = KNOWN_CONTEXTS.filter(
+      ctx => !blockedCategories?.includes(ctx)
+    );
+    
+    focusEngine.start(allowedContexts, durationMinutes)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => {
+        console.error(err);
+        sendResponse({ success: false, error: err.message });
+      });
+    return true; // Indicates async response
+  }
+  else if (request.type === "END_FOCUS_SESSION") {
+    focusEngine.end()
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => {
+        console.error("Error ending focus session:", err);
+        sendResponse({ success: false, error: err.message });
+      });
+    return true; // Required for async response
+  }
+  else if (request.type === "GET_FOCUS_TIME_LEFT") {
+    getFocusState()
+      .then(focusState => {
+        const seconds = focusState.endTime
+          ? Math.max(0, (focusState.endTime - Date.now()) / 1000)
+          : 0;
+        sendResponse({ seconds });
+      })
+      .catch(error => {
+        console.error("Error getting focus time left:", error);
+        sendResponse({ seconds: 0 });
+      });
+    return true; // Required for async response
+  }
+  else if (request.type === "OVERRIDE_BLOCK") {
+    // Allow explicit override
+    // Just respond with success, this would unblock the tab 
+    // if we had a temporary block list
+    sendResponse({ success: true });
+    return true;
+  }
+  else if (request.type === "RESTORE_WORKSPACE") {
+    const { name } = request.payload || {};
+    restoreWorkspace(name)
+      .then(() => sendResponse({ success: true }))
+      .catch((err) => {
+        console.error(err);
+        sendResponse({ success: false, error: err.message });
+      });
+    return true; // Indicates async response
+  }
+  else if (request.type === "CHECK_FOCUS_STATUS") {
+    checkFocusStatus()
+      .then(result => sendResponse(result))
+      .catch(error => {
+        console.error("Error checking focus status:", error);
+        sendResponse(null);
+      });
+    return true; // Required for async response
+  }
+  else if (request.type === "CONTENT_SCRIPT_READY") {
+    // Content script is ready to receive messages
+    const tabId = sender.tab?.id;
+    // if (tabId && activeTimer && activeTimer.active && activeTimer.endTime > Date.now()) {
+    //   console.log(`Tab ${tabId} is ready, sending active timer`);
+    //   // Send the timer right away
+    //   chrome.tabs.sendMessage(tabId, {
+    //     type: "RESTORE_FOCUS_TIMER",
+    //     timerState: activeTimer
+    //   }).catch(err => {
+    //     console.log('Tab not fully ready, will retry');
+    //     // Try again after a short delay
+    //     setTimeout(() => {
+    //       chrome.tabs.sendMessage(tabId, {
+    //         type: 'RESTORE_FOCUS_TIMER',
+    //         timerState: activeTimer
+    //       }).catch(err => console.error('Failed to restore timer after content script ready retry:', err));
+    //     }, 500);
+    //   });
+    // }
+    sendResponse({ success: true });
+    return true;
+  }
+  else if (request.type === "TIMER_EXPIRED") {
+    // Handle timer expiration from the side panel
+    // endFocusTimer();
+    // Show a drift warning on the current page
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0] && tabs[0].id) {
+        chrome.tabs.sendMessage(tabs[0].id, {
+          type: "DRIFT_WARNING",
+          message: "Time's up! Return to your primary task now."
+        }, (resp) => {
+          if (chrome.runtime.lastError || resp === undefined) {
+            // Nobody listened - fall back to the blocked page
+            chrome.tabs.update(tabs[0].id!, {url: BLOCKED_PAGE_URL});
+          }
+        });
+      }
+    });
+    sendResponse({ success: true });
+    return true;
+  }
+  else if (request.type === "PARK_LINK") {
+    const { url, context, title } = request;
+    
+    // Handle the parked link asynchronously
+    (async () => {
+      try {
+        await saveForLater(url, context, title);
+        console.log(`[Parked Links] Saved for later: ${title || url} (${context})`);
+      } catch (error) {
+        console.error("Error parking link:", error);
+      }
+    })();
+    
+    return false; // No response needed
+  }
+  else if (request.type === "RELEASE_PARKED_LINKS") {
+    // Handle the release of parked links asynchronously
+    (async () => {
+      try {
+        await releaseParkedLinks();
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error("Error releasing parked links:", error);
+        sendResponse({ success: false, error: String(error) });
+      }
+    })();
+    
+    return true; // Indicates async response
+  }
+  else if (request.type === "TRAIN_CONTEXT") {
+    (async () => {
+      const { url, title, actualContext, predictedContext, isFalsePositive } = request;
+      
+      // Get or create context data for this URL
+      const contextData = await getContextData(url);
+      
+      // Update training data
+      if (!contextData.training) {
+        contextData.training = {
+          falsePositives: [],
+          truePositives: []
+        };
+      }
+      
+      if (isFalsePositive) {
+        contextData.training.falsePositives.push({
+          timestamp: Date.now(),
+          actualContext,
+          predictedContext
+        });
+      } else {
+        contextData.training.truePositives.push({
+          timestamp: Date.now(),
+          actualContext,
+          predictedContext
+        });
+      }
+      
+      // Save updated context data
+      await saveContextData(url, contextData);
+      
+      // Recalculate context weights based on training data
+      await updateContextWeights(url);
+      
+      sendResponse({ success: true });
+    })();
+    return true; // Required for async response
+  }
+  else if (request.type === "STAY_FOCUSED_ACTION") {
+    (async () => {
+      const { url, context, title } = request.payload;
+      try {
+        await saveForLater(url, context, title);
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab?.id) await goBackOrClose(tab.id);
+        sendResponse({ success: true });
+      } catch (e: unknown) {
+        console.error("Stay‑focused flow failed:", e);
+        sendResponse({ 
+          success: false, 
+          error: e instanceof Error ? e.message : String(e)
+        });
+      }
+    })();
+    return true;
+  }
+  else if (request.type === "FOCUS_STATUS") {
+    // Return the current focus state to the popup
+    getFocusState()
+      .then(focusState => sendResponse(focusState))
+      .catch(error => {
+        console.error("Error getting focus status:", error);
+        sendResponse(null);
+      });
+    return true; // Required for async response
+  }
+  
+  return false; // No response needed for other messages
+});
+
+/**
+ * Toggle focus mode on/off
+ */
+async function toggleFocusMode(enabled: boolean): Promise<void> {
+  if (enabled) {
+    // Just update badge in the new approach
+    updateBadge();
+  } else {
+    // Ungroup all tabs when focus mode is disabled
+    await ungroupAllTabs();
+    // Clear badge when focus mode is disabled
+    chrome.action.setBadgeText({ text: "" });
+  }
+}
+
+/**
+ * Handle context update with enhanced data
+ */
+async function handleContextUpdate(
+  tabId: number, 
+  context: string, 
+  contextData?: any
+): Promise<void> {
+  // Get current settings
+  const { autoGroupEnabled = true } = await getStorage([
+    "autoGroupEnabled",
+  ]);
+
+  // If auto-group is off, do nothing
+  if (autoGroupEnabled === false) {
+    return;
+  }
+
+  // Group tab by context
+  await groupTabByContext(tabId, context);
+  
+  // Update badge when context changes
+  updateBadge();
+}
+
+/**
+ * Updates the badge with current context switch count
+ */
+async function updateBadge(): Promise<void> {
+  try {
+    // Update to use the new focusState instead of focusModeEnabled
+    const focusState = await getFocusState();
+    
+    // If focus mode is not active, don't show badge
+    if (!focusState.active) {
+      chrome.action.setBadgeText({ text: "" });
+      return;
+    }
+    
+    // Check if we're showing focus time or context switches
+    const focusTimeLeft = await focusEngine.getTimeLeft();
+    
+    if (focusTimeLeft > 0) {
+      // Convert seconds to minutes for badge
+      const minutesLeft = Math.ceil(focusTimeLeft / 60);
+      chrome.action.setBadgeText({ text: minutesLeft.toString() });
+      
+      // Get focus status to determine color
+      const focusStatus = await checkFocusStatus();
+      if (focusStatus.isLostFocus) {
+        chrome.action.setBadgeBackgroundColor({ color: "#d32f2f" }); // Red for lost focus
+      } else {
+        chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue for focused
+      }
+    } else {
+      // Show context switch count if no timer active
+      const focusStatus = await checkFocusStatus();
+      const switchCount = focusStatus.contextSwitches.length;
+      
+      // Set badge with context switch count
+      chrome.action.setBadgeText({ text: switchCount.toString() });
+      
+      // Change color if focus is lost
+      if (focusStatus.isLostFocus) {
+        chrome.action.setBadgeBackgroundColor({ color: "#d32f2f" }); // Red for lost focus
+      } else {
+        chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue for focused
+      }
+    }
+  } catch (error) {
+    console.error("Error updating badge:", error);
+  }
+}
+
+/**
+ * Send a high-visibility drift warning to the active tab
+ */
+async function sendDriftWarning(focusStatus: any): Promise<void> {
+  try {
+    // Always show warnings during focus sessions regardless of notification settings
+    // This is critical - users need to be alerted when drifting
+    
+    // Check if a focus session is active
+    const isSessionActive = await focusEngine.isActive();
+    if (!isSessionActive) {
+      return; // Only show drift warnings during active focus sessions
+    }
+    
+    console.log("[Focus] Sending drift warning to active tab", focusStatus);
+    
+    // Get the active tab
+    const tabs = await chrome.tabs.query({active: true, currentWindow: true});
+    if (!tabs.length || !tabs[0].id) return;
+
+    const activeTab = tabs[0];
+    const tabId = activeTab.id as number;
+    
+    // Skip chrome:// pages and extension pages
+    if (
+      activeTab.url?.startsWith("chrome://") || 
+      activeTab.url?.startsWith("chrome-extension://")
+    ) {
+      return;
+    }
+    
+    // Create a useful message about why focus was lost
+    let message = "YOU'RE DRIFTING FROM YOUR FOCUS TASK!";
+    
+    // If we have context switches, mention the last switch
+    if (focusStatus.contextSwitches.length > 0) {
+      const lastSwitch = focusStatus.contextSwitches[focusStatus.contextSwitches.length - 1];
+      message = `FOCUS LOST: Switched from ${lastSwitch.from} to ${lastSwitch.to}`;
+    }
+    
+    // Send the warning with callback to check if handled
+    chrome.tabs.sendMessage(tabId, {
+      type: "DRIFT_WARNING",
+      message
+    }, (resp) => {
+      if (chrome.runtime.lastError || resp === undefined) {
+        // Nobody listened - fall back to the blocked page
+        chrome.tabs.update(tabId, {url: BLOCKED_PAGE_URL});
+      }
+    });
+      
+    // Also show a system notification
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+      title: 'FOCUS ALERT!',
+      message: message,
+      priority: 2,
+      requireInteraction: true
+    });
+      
+    console.log("[Focus] Drift warning sent successfully");
+  } catch (error) {
+    console.error("Error sending drift warning:", error);
+  }
+}
+
+/**
+ * Sets up URL blocking based on focus session
+ */
+function setupFocusSessionUrlBlocking(): void {
+  // Listen for tab updates (URL changes)
+  chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+    // Only check for URL changes
+    if (changeInfo.url && tab.url) {
+      try {
+        // Check if this URL should be blocked
+        const shouldBlock = await checkIfUrlShouldBeBlocked(tab.url);
+        if (shouldBlock) {
+          console.log(`[Focus] Blocking URL: ${tab.url}`);
+          
+          // Use standard BLOCKED_PAGE_URL for consistency with drift warnings
+          chrome.tabs.update(tabId, { url: BLOCKED_PAGE_URL });
+        }
+      } catch (error) {
+        console.error("Error checking URL:", error);
+      }
+    }
+  });
+}
+
+/**
+ * Check if URL should be blocked according to focus state and context
+ */
+async function checkIfUrlShouldBeBlocked(url: string): Promise<boolean> {
+  // Get the focus state
+  const focusState = await getFocusState();
+  
+  // If focus is not active, nothing is blocked
+  if (!focusState.active) {
+    return false;
+  }
+  
+  try {
+    // Classify the URL's context
+    const contextData = await getContextData(url);
+    const context = contextData?.context;
+    
+    if (!context) {
+      // If we can't determine the context, don't block
+      return false;
+    }
+    
+    // Use focusEngine to check if this context is blocked
+    return focusEngine.isBlocked(context);
+  } catch (error) {
+    console.error("Error classifying URL:", error);
+    return false;
+  }
+}
+
+/**
+ * Periodically check if a focus session should be ended
+ */
+async function checkFocusSessionStatus(): Promise<void> {
+  const timeLeft = await focusEngine.getTimeLeft();
+  if (timeLeft <= 0) {
+    const active = await focusEngine.isActive();
+    if (active) {
+      // Focus session time is up
+      await focusEngine.end();
+      console.log("[Focus] Session ended automatically due to timeout");
+      
+      // Show notification to user
+      chrome.notifications.create({
+        type: 'basic',
+        iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+        title: 'Focus Session Complete',
+        message: `Your timed focus session has ended.`,
+      });
+    }
+  }
+}
+
+/**
+ * Cleanup in-memory reference on tab removal
+ */
+onTabRemoved((removedTabId) => {
+  delete tabContextMap[removedTabId];
+});
+
+// Function to get context data for a URL
+async function getContextData(url: string): Promise<any> {
+  const result = await chrome.storage.local.get([url]);
+  return result[url] || { contexts: [], training: { falsePositives: [], truePositives: [] } };
+}
+
+// Function to save context data for a URL
+async function saveContextData(url: string, data: any): Promise<void> {
+  await chrome.storage.local.set({ [url]: data });
+}
+
+// Function to update context weights based on training data
+async function updateContextWeights(url: string): Promise<void> {
+  const contextData = await getContextData(url);
+  const { training } = contextData;
+  
+  if (!training) return;
+  
+  // Calculate weights based on false positives and true positives
+  const weights: { [key: string]: number } = {};
+  
+  // Decrease weight for contexts that frequently cause false positives
+  training.falsePositives.forEach((fp: any) => {
+    weights[fp.predictedContext] = (weights[fp.predictedContext] || 1) * 0.9;
+  });
+  
+  // Increase weight for contexts that are frequently true positives
+  training.truePositives.forEach((tp: any) => {
+    weights[tp.predictedContext] = (weights[tp.predictedContext] || 1) * 1.1;
+  });
+  
+  // Update context weights
+  contextData.weights = weights;
+  await saveContextData(url, contextData);
+}
+
+// Modify the tabs.onUpdated handler to remove timer-related code
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // Check if the tab has completed loading
+  if (changeInfo.status === 'complete' && tab.url && !tab.url.startsWith('chrome://')) {
+    // Start a short delay to allow any content scripts to initialize
+    setTimeout(() => {
+      // Remove timer-related code
+      // if (activeTimer && activeTimer.active && activeTimer.endTime > Date.now()) {
+      //   // Target just this specific tab
+      //   chrome.scripting.executeScript({
+      //     target: { tabId },
+      //     func: () => {
+      //       // Force content script to re-check for timer
+      //       chrome.runtime.sendMessage({ type: "CONTENT_SCRIPT_READY" });
+      //     }
+      //   }).catch(err => {
+      //     // Ignore errors for restricted pages
+      //   });
+      //   
+      //   // Send the timer state to the newly loaded tab
+      //   chrome.tabs.sendMessage(tabId, {
+      //     type: 'RESTORE_FOCUS_TIMER',
+      //     timerState: activeTimer
+      //   }).catch(err => {
+      //     console.log('Tab not ready yet, will use script injection instead');
+      //     // Use script injection as fallback
+      //     ensureTimerVisibility();
+      //   });
+      // }
+    }, 500);
+  }
+});
+
+// Set default settings on installation/update
+chrome.runtime.onInstalled.addListener(details => {
+  if (details.reason === "install") {
+    // First-time install: set defaults
+    chrome.storage.local.set({
+      extensionEnabled: true,
+      autoGroupEnabled: true, // Set auto grouping enabled by default
+      focusState: {
+        active: false,
+        allowedContexts: []
+      },
+      firstRunComplete: false
+    });
+    
+    // Show onboarding page
+    chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") });
+  } else if (details.reason === "update") {
+    // Handle migration from old storage format to new
+    chrome.storage.local.get([
+      "autoGroupEnabled", // Check for this setting
+      "focusSessionActive", 
+      "focusSessionEndTime",
+      "blockedCategories",
+      "focusState"
+    ], result => {
+      // Always set extension to enabled
+      const update: Record<string, any> = {
+        extensionEnabled: true
+      };
+      
+      // Migration: If we have old format data but no new focusState yet, convert it
+      if (!result.focusState && (result.focusSessionActive || result.blockedCategories)) {
+        console.log("Migrating from old focus session format to new focusState format");
+        
+        // Convert to new FocusState format (invert the block logic to allowedContexts)
+        const knownContexts = [
+          "Work", "Development", "Research", "Learning", 
+          "Entertainment", "Social", "Shopping", "News"
+        ];
+        
+        // Calculate allowed contexts by excluding blocked ones
+        const blockedCategories = result.blockedCategories || [];
+        const allowedContexts = knownContexts.filter(ctx => !blockedCategories.includes(ctx));
+        
+        update.focusState = {
+          active: result.focusSessionActive === true,
+          allowedContexts,
+          endTime: result.focusSessionEndTime || undefined
+        };
+        
+        // Remove old keys after migration
+        chrome.storage.local.remove([
+          "focusSessionActive", 
+          "focusSessionEndTime", 
+          "blockedCategories"
+        ]);
+      }
+      
+      // Ensure we have explicit boolean values, not undefined  
+      if (result.autoGroupEnabled === undefined) update.autoGroupEnabled = true;
+      
+      // Apply all updates
+      chrome.storage.local.set(update);
+    });
+  }
+});
+
+// Kick off on load
+initExtension().catch(console.error);
+
+# ./src/content/index.ts
+################################################################################
+/**
+ * Content script for Context Focus
+ * 
+ * This script runs on each page and does only one thing:
+ * 1. Classify the current page context
+ * 2. Send the classification to the background script
+ */
+
+import { classifyPageContext } from "../lib/contextEngine";
+
+// Keep track of last context (to avoid sending duplicate messages)
+let lastContext: string | null = null;
+
+// Initialize context detection
+async function initContextDetection(): Promise<void> {
+  // Register for future DOM changes
+  setupMutationObserver();
+  
+  // Initial classification
+  await detectAndSendContext();
+}
+
+/**
+ * Set up a mutation observer to detect and send context when content changes
+ */
+function setupMutationObserver(): void {
+  // Observe changes to the page content
+  const observer = new MutationObserver(() => {
+    // Avoid excessive classifications by debouncing
+    if (!contextDetectionTimer) {
+      scheduleContextCheck();
+    }
+  });
+  
+  // Start observing
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true
+  });
+}
+
+// Timer for debouncing context detection
+let contextDetectionTimer: number | null = null;
+
+/**
+ * Schedule a context check after a short delay (debouncing)
+ */
+function scheduleContextCheck(): void {
+  // Clear any existing timer
+  if (contextDetectionTimer) {
+    window.clearTimeout(contextDetectionTimer);
+    contextDetectionTimer = null;
+  }
+
+  // Set a new timer
+  contextDetectionTimer = window.setTimeout(async () => {
+    await detectAndSendContext();
+  }, 1000);
+}
+
+/**
+ * Extract useful data from the current page
+ */
+function extractPageData() {
+  // Get basic page info
+  const url = window.location.href;
+  const title = document.title;
+  
+  // Extract metadata
+  const metaDescription = document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+  const metaKeywords = document.querySelector('meta[name="keywords"]')?.getAttribute('content')?.split(',').map(k => k.trim()) || [];
+  
+  // Extract visible text
+  const textElements = document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, a, span, div, li');
+  let visibleText = '';
+  
+  // Get text from the first 100 elements (for performance)
+  const maxElements = Math.min(textElements.length, 100);
+  for (let i = 0; i < maxElements; i++) {
+    const el = textElements[i];
+    const style = window.getComputedStyle(el);
+    if (style.display !== 'none' && style.visibility !== 'hidden') {
+      visibleText += el.textContent + ' ';
+      if (visibleText.length > 5000) break; // Limit text length
+    }
+  }
+  
+  return {
+    url,
+    title,
+    fullText: visibleText.trim(),
+    metaDescription,
+    metaKeywords
+  };
+}
+
+/**
+ * Detect the context of the current page and send it to the background script
+ */
+async function detectAndSendContext(): Promise<void> {
+  try {
+    // Extract page data
+    const pageData = extractPageData();
+    
+    // Classify context
+    const contextResult = await classifyPageContext(pageData);
+    
+    // Only send if context has changed
+    if (contextResult.primaryContext !== lastContext) {
+      lastContext = contextResult.primaryContext;
+      
+      // Simple message with just the context and confidence
+      chrome.runtime.sendMessage({
+        type: "CONTEXT_DETECTED",
+        context: contextResult.primaryContext,
+        confidence: contextResult.confidence,
+        url: pageData.url
+      });
+    }
+  } catch (error) {
+    console.error("Error detecting context:", error);
+  }
+}
+
+// Start context detection when the page is loaded
+(function() {
+  if (document.readyState === 'complete' || document.readyState === 'interactive') {
+    initContextDetection();
+  } else {
+    document.addEventListener('DOMContentLoaded', initContextDetection);
+  }
+})();
+
+// Add listener for DRIFT_WARNING messages from background script
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type !== "DRIFT_WARNING") return;
+
+  // remove any previous overlay
+  const old = document.getElementById("__cf_drift_overlay");
+  old?.remove();
+
+  // build a full‑screen overlay
+  const ov = document.createElement("div");
+  ov.id = "__cf_drift_overlay";
+  ov.style.cssText = `
+    position:fixed;inset:0;z-index:2147483647;
+    background:rgba(0,0,0,.85);color:#fff;display:flex;
+    flex-direction:column;align-items:center;justify-content:center;
+    font:700 32px/1.4 system-ui, sans-serif;text-align:center;
+  `;
+  ov.textContent = msg.message || "You're drifting!";
+  
+  // optional "Return" button
+  const btn = document.createElement("button");
+  btn.textContent = "Back to focus";
+  btn.style.cssText = `
+    margin-top:24px;padding:12px 24px;font-size:18px;font-weight:700;
+    border:none;border-radius:6px;cursor:pointer;background:#d32f2f;color:#fff;
+  `;
+  btn.onclick = () => ov.remove();
+  ov.appendChild(btn);
+
+  document.documentElement.appendChild(ov);
+
+  // let background know we handled it (optional)
+  return true;  // keeps the sendResponse channel open
+});
+
+# ./src/sidepanel/index.ts
+################################################################################
+// DOM element references
+const timerEl = document.getElementById("timer") as HTMLElement;
+const endBtn = document.getElementById("endBtn") as HTMLButtonElement;
+const blockedList = document.getElementById("blockedList") as HTMLElement;
+
+interface FocusTimeResponse {
+  seconds: number;
+}
+
+/**
+ * Update timer display every second
+ */
+async function updateTimer(): Promise<void> {
+  try {
+    const response = await chrome.runtime.sendMessage<any, FocusTimeResponse>({ 
+      type: "GET_FOCUS_TIME_LEFT" 
+    });
+    
+    const seconds = response?.seconds || 0;
+    
+    if (seconds <= 0) {
+      timerEl.textContent = "COMPLETE";
+      timerEl.style.color = "#4caf50"; // Green
+      return;
+    }
+    
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    timerEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    
+    // Visual warning when time is low
+    if (seconds < 300) { // Less than 5 minutes (300 seconds)
+      timerEl.style.color = "#ff9800"; // Orange
+    }
+  } catch (error) {
+    console.error("Error fetching time left:", error);
+    timerEl.textContent = "ERROR";
+    timerEl.style.color = "#f44336"; // Red
+  }
+}
+
+/**
+ * Load blocked categories from storage
+ */
+async function loadBlockedCategories(): Promise<void> {
+  try {
+    const { blockedCategories } = await chrome.storage.local.get("blockedCategories");
+    
+    if (!blockedList) return;
+    
+    if (blockedCategories && blockedCategories.length > 0) {
+      blockedList.innerHTML = '';
+      
+      blockedCategories.forEach((category: string) => {
+        const div = document.createElement('div');
+        div.className = 'context-item blocked';
+        div.textContent = category;
+        blockedList.appendChild(div);
+      });
+    } else {
+      blockedList.innerHTML = '<div class="context-item">No categories blocked</div>';
+    }
+  } catch (error) {
+    console.error("Error loading blocked categories:", error);
+    if (blockedList) {
+      blockedList.innerHTML = '<div class="context-item">Error loading categories</div>';
+    }
+  }
+}
+
+/**
+ * Handle ending the focus session
+ */
+async function handleEndSession(): Promise<void> {
+  try {
+    const saveWorkspace = confirm("Save current workspace before ending?");
+    let workspaceName = '';
+    
+    if (saveWorkspace) {
+      workspaceName = prompt("Enter workspace name:", `Workspace_${new Date().toLocaleDateString()}`) || '';
+      if (!workspaceName) return; // User cancelled
+    }
+    
+    await chrome.runtime.sendMessage({
+      type: "END_FOCUS_SESSION",
+      payload: {
+        saveWorkspace,
+        workspaceName
+      }
+    });
+    
+    timerEl.textContent = "ENDED";
+    timerEl.style.color = "#f44336"; // Red
+    endBtn.disabled = true;
+    endBtn.textContent = "Session Ended";
+  } catch (error) {
+    console.error("Error ending session:", error);
+    alert("Error ending session. Please try again.");
+  }
+}
+
+/**
+ * Initialize the sidepanel
+ */
+function initialize(): void {
+  // Add event listener to end button
+  endBtn?.addEventListener("click", handleEndSession);
+  
+  // Load initial data
+  loadBlockedCategories().catch(console.error);
+  updateTimer().catch(console.error);
+  
+  // Set up timer interval
+  setInterval(() => {
+    updateTimer().catch(console.error);
+  }, 1000);
+}
+
+// Start everything when page loads
+document.addEventListener("DOMContentLoaded", initialize); 
+
+# ./src/sidepanel/index.html
+################################################################################
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Focus Session</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #0d47a1;
+      color: #fff;
+      text-align: center;
+      padding: 15px;
+    }
+    #timer {
+      font-size: 32px;
+      text-align: center;
+      margin: 20px 0;
+      font-weight: bold;
+    }
+    .btn {
+      display: block;
+      width: 90%;
+      margin: 10px auto;
+      padding: 8px;
+      background: #d32f2f;
+      border: 0;
+      color: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    .btn:hover {
+      background: #b71c1c;
+    }
+    .status {
+      margin: 15px 0;
+      padding: 10px;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.1);
+    }
+    .context-list {
+      margin-top: 20px;
+      text-align: left;
+    }
+    .context-item {
+      padding: 5px;
+      margin-bottom: 5px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.1);
+    }
+    .context-item.blocked {
+      text-decoration: line-through;
+      opacity: 0.7;
+    }
+  </style>
+</head>
+<body>
+  <h2>FOCUS SESSION</h2>
+  <div id="timer">--:--</div>
+  
+  <div class="status">
+    Blocked categories:
+    <div id="blockedList" class="context-list">
+      <!-- Blocked categories will be populated here -->
+    </div>
+  </div>
+  
+  <button id="endBtn" class="btn">End Session</button>
+  
+  <script src="../sidepanel.js"></script>
+</body>
+</html> 
+
+# ./src/sidepanel/parkedLinks.ts
+################################################################################
+import { getParkedLinks, releaseParkedLinks } from "../api/parkedLinksApi";
+import { ParkedLink } from "../types/index";
+
+/**
+ * Create the UI for showing parked links in the side panel
+ */
+export async function createParkedLinksUI(container: HTMLElement): Promise<void> {
+  const parkedLinks = await getParkedLinks();
+  
+  // Create section for parked links
+  const section = document.createElement("section");
+  section.classList.add("parked-links-section");
+  section.style.marginTop = "20px";
+  section.style.borderTop = "1px solid #eee";
+  section.style.paddingTop = "15px";
+  
+  // Section header
+  const header = document.createElement("h3");
+  header.textContent = "Parked for Later";
+  header.style.fontSize = "16px";
+  header.style.marginBottom = "10px";
+  header.style.fontWeight = "bold";
+  section.appendChild(header);
+
+  // Show different UI depending on whether there are parked links
+  if (parkedLinks.length === 0) {
+    const emptyMessage = document.createElement("p");
+    emptyMessage.textContent = "No links have been parked yet.";
+    emptyMessage.style.color = "#666";
+    emptyMessage.style.fontSize = "14px";
+    emptyMessage.style.fontStyle = "italic";
+    section.appendChild(emptyMessage);
+  } else {
+    // Create a list for the parked links
+    const linksList = document.createElement("ul");
+    linksList.style.listStyle = "none";
+    linksList.style.padding = "0";
+    linksList.style.margin = "0";
+    
+    parkedLinks.forEach((link) => {
+      const listItem = document.createElement("li");
+      listItem.style.padding = "8px 0";
+      listItem.style.borderBottom = "1px solid #f0f0f0";
+      
+      const linkTitle = document.createElement("div");
+      linkTitle.textContent = link.title || link.url;
+      linkTitle.style.fontSize = "14px";
+      linkTitle.style.fontWeight = "500";
+      linkTitle.style.textOverflow = "ellipsis";
+      linkTitle.style.overflow = "hidden";
+      linkTitle.style.whiteSpace = "nowrap";
+      linkTitle.style.marginBottom = "4px";
+      listItem.appendChild(linkTitle);
+      
+      const linkInfo = document.createElement("div");
+      linkInfo.style.display = "flex";
+      linkInfo.style.justifyContent = "space-between";
+      linkInfo.style.fontSize = "12px";
+      linkInfo.style.color = "#666";
+      
+      const contextSpan = document.createElement("span");
+      contextSpan.textContent = link.context;
+      linkInfo.appendChild(contextSpan);
+      
+      const timeSpan = document.createElement("span");
+      const date = new Date(link.timestamp);
+      timeSpan.textContent = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      linkInfo.appendChild(timeSpan);
+      
+      listItem.appendChild(linkInfo);
+      linksList.appendChild(listItem);
+    });
+    
+    section.appendChild(linksList);
+    
+    // Add a button to open all links
+    const openAllBtn = document.createElement("button");
+    openAllBtn.textContent = "Open All Links";
+    openAllBtn.style.marginTop = "15px";
+    openAllBtn.style.padding = "8px 12px";
+    openAllBtn.style.backgroundColor = "#0066cc";
+    openAllBtn.style.color = "#fff";
+    openAllBtn.style.border = "none";
+    openAllBtn.style.borderRadius = "4px";
+    openAllBtn.style.cursor = "pointer";
+    openAllBtn.style.fontWeight = "500";
+    
+    openAllBtn.addEventListener("click", async () => {
+      try {
+        await releaseParkedLinks();
+        
+        // Update the UI after opening links
+        createParkedLinksUI(container);
+      } catch (error) {
+        console.error("Error opening parked links:", error);
+      }
+    });
+    
+    section.appendChild(openAllBtn);
+  }
+  
+  // Clear existing content and append the new section
+  container.innerHTML = "";
+  container.appendChild(section);
+}
+
+/**
+ * Initialize the parked links UI and set up refresh
+ */
+export function initParkedLinksUI(containerId: string): void {
+  const container = document.getElementById(containerId);
+  if (!container) {
+    console.error("Container not found:", containerId);
+    return;
+  }
+  
+  // Initial UI creation
+  createParkedLinksUI(container);
+  
+  // Refresh UI periodically
+  setInterval(() => {
+    createParkedLinksUI(container);
+  }, 30000); // refresh every 30 seconds
+} 
+
+# ./src/sidepanel/sidepanel-timer.html
+################################################################################
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Focus Timer</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #f9f9f9;
+      height: 100vh;
+      box-sizing: border-box;
+    }
+    
+    .timer-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .timer-display {
+      font-size: 32px;
+      font-weight: bold;
+      margin: 20px 0;
+    }
+    
+    .context-info {
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    
+    .end-button {
+      background: #f44336;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    
+    .warning {
+      color: #f44336;
+      font-weight: bold;
+      margin-top: 16px;
+      text-align: center;
+    }
+    
+    .pulsing {
+      animation: pulse 1s alternate infinite;
+    }
+    
+    @keyframes pulse {
+      0% { opacity: 0.7; }
+      100% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="timer-container">
+    <h2>Focus Timer</h2>
+    
+    <div class="context-info">
+      <strong>Current context:</strong>
+      <div id="context-name">Loading...</div>
+    </div>
+    
+    <div class="timer-display" id="time-remaining">00:00</div>
+    
+    <button class="end-button" id="end-timer">End Timer & Return to Focus</button>
+    
+    <div class="warning" id="warning-message" style="display: none;">
+      Time's almost up! Finish what you're doing and return to focus.
+    </div>
+  </div>
+
+  <script src="sidepanel-timer.js"></script>
+</body>
+</html> 
+
+# ./src/sidepanel/sidepanel-timer.js
+################################################################################
+// Get DOM elements
+const timeRemainingElement = document.getElementById('time-remaining');
+const contextNameElement = document.getElementById('context-name');
+const endTimerButton = document.getElementById('end-timer');
+const warningMessage = document.getElementById('warning-message');
+
+// Timer variables
+let timerInterval;
+let endTime = 0;
+let fromContext = '';
+let toContext = '';
+
+// Initialize the timer
+function initializeTimer() {
+  // Get timer data from storage
+  chrome.storage.local.get(['activeGlobalTimer'], (result) => {
+    if (result.activeGlobalTimer && result.activeGlobalTimer.active) {
+      const { endTime: storedEndTime, fromContext: from, toContext: to } = result.activeGlobalTimer;
+      
+      // Set timer data
+      endTime = storedEndTime;
+      fromContext = from;
+      toContext = to;
+      
+      // Update UI
+      contextNameElement.textContent = `Switched from "${fromContext}" to "${toContext}"`;
+      
+      // Start timer
+      startTimerDisplay();
+    } else {
+      // No active timer
+      timeRemainingElement.textContent = 'No active timer';
+      contextNameElement.textContent = 'N/A';
+      warningMessage.style.display = 'none';
+    }
+  });
+}
+
+// Start timer display
+function startTimerDisplay() {
+  // Clear any existing interval
+  if (timerInterval) {
+    clearInterval(timerInterval);
+  }
+  
+  // Update immediately
+  updateTimerDisplay();
+  
+  // Update every second
+  timerInterval = setInterval(() => {
+    updateTimerDisplay();
+  }, 1000);
+}
+
+// Update timer display
+function updateTimerDisplay() {
+  const now = Date.now();
+  const timeLeft = Math.max(0, endTime - now);
+  
+  if (timeLeft <= 0) {
+    // Timer expired
+    timeRemainingElement.textContent = 'Expired';
+    clearInterval(timerInterval);
+    
+    // Show warning
+    warningMessage.textContent = 'Timer has expired. Return to your focus now!';
+    warningMessage.style.display = 'block';
+    warningMessage.classList.add('pulsing');
+    
+    // Notify background
+    chrome.runtime.sendMessage({ type: 'TIMER_EXPIRED' });
+    return;
+  }
+  
+  // Format time remaining
+  const minutes = Math.floor(timeLeft / 60000);
+  const seconds = Math.floor((timeLeft % 60000) / 1000);
+  timeRemainingElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  
+  // Add visual indication when time is running low
+  if (timeLeft < 60000) {
+    timeRemainingElement.style.color = '#f44336';
+    timeRemainingElement.classList.add('pulsing');
+    
+    // Show warning message
+    warningMessage.style.display = 'block';
+  } else {
+    timeRemainingElement.style.color = '';
+    timeRemainingElement.classList.remove('pulsing');
+    warningMessage.style.display = 'none';
+  }
+}
+
+// End timer handler
+endTimerButton.addEventListener('click', () => {
+  chrome.runtime.sendMessage({ type: 'END_FOCUS_TIMER' });
+  timeRemainingElement.textContent = 'Timer ended';
+  clearInterval(timerInterval);
+  warningMessage.style.display = 'none';
+  
+  // Update UI to show timer ended
+  contextNameElement.textContent = 'Timer ended - returned to focus';
+});
+
+// Listen for timer updates from background script
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === 'TIMER_UPDATED') {
+    initializeTimer();
+  } else if (message.type === 'TIMER_ENDED') {
+    timeRemainingElement.textContent = 'Timer ended';
+    contextNameElement.textContent = 'N/A';
+    warningMessage.style.display = 'none';
+    clearInterval(timerInterval);
+  }
+});
+
+// Initialize on load
+document.addEventListener('DOMContentLoaded', initializeTimer);
+
+// Poll for timer updates (backup mechanism)
+setInterval(initializeTimer, 5000); 
+

@@ -14,35 +14,22 @@ const BLOCKED_PAGE_URL = chrome.runtime.getURL("blocked.html");
  * Initialize the extension with proper default settings
  */
 async function initExtension(): Promise<void> {
-  // Use explicit defaults to avoid undefined behavior
-  const { 
-    extensionEnabled = true,
-  } = await getStorage([
-    "extensionEnabled"
-  ]);
+  // Always enable the extension
+  await setStorage({ extensionEnabled: true });
   
-  console.log(`Initializing with state: ${JSON.stringify({ 
-    extensionEnabled
-  })}`);
+  console.log("[Background] Extension enabled.");
   
-  // Check explicitly for true values
-  if (extensionEnabled === true) {
-    console.log("[Background] Extension enabled by user preference.");
-    
-    // Check for active sessions - now using the new focusState
-    const focusState = await getFocusState();
-    if (focusState.active) {
-      console.log("[Background] Focus session was active at shutdown, verifying...");
-      // Verify session is still valid (not expired)
-      if (!focusState.endTime || focusState.endTime <= Date.now()) {
-        console.log("[Background] Focus session expired during shutdown, cleaning up");
-        await setFocusState({ active: false, endTime: undefined });
-      } else {
-        console.log(`[Background] Focus session continues until ${new Date(focusState.endTime).toLocaleTimeString()}`);
-      }
+  // Check for active sessions - now using the new focusState
+  const focusState = await getFocusState();
+  if (focusState.active) {
+    console.log("[Background] Focus session was active at shutdown, verifying...");
+    // Verify session is still valid (not expired)
+    if (!focusState.endTime || focusState.endTime <= Date.now()) {
+      console.log("[Background] Focus session expired during shutdown, cleaning up");
+      await setFocusState({ active: false, endTime: undefined });
+    } else {
+      console.log(`[Background] Focus session continues until ${new Date(focusState.endTime).toLocaleTimeString()}`);
     }
-  } else {
-    console.log("[Background] Extension disabled by user preference.");
   }
   
   // Setup URL blocking for Focus Session - always setup the handler
@@ -120,7 +107,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return false; // No response needed
   }
   else if (request.type === "START_FOCUS_SESSION") {
-    const { durationMinutes, allowedContexts } = request.payload || {};
+    const { durationMinutes, blockedCategories } = request.payload || {};
+    
+    const KNOWN_CONTEXTS = [
+      "Work", "Development", "Research", "Learning",
+      "Entertainment", "Social", "Shopping", "News"
+    ];
+    const allowedContexts = KNOWN_CONTEXTS.filter(
+      ctx => !blockedCategories?.includes(ctx)
+    );
+    
     focusEngine.start(allowedContexts, durationMinutes)
       .then(() => sendResponse({ success: true }))
       .catch((err) => {
@@ -345,13 +341,12 @@ async function handleContextUpdate(
   contextData?: any
 ): Promise<void> {
   // Get current settings
-  const { extensionEnabled, autoGroupEnabled = true } = await getStorage([
-    "extensionEnabled",
+  const { autoGroupEnabled = true } = await getStorage([
     "autoGroupEnabled",
   ]);
 
-  // If extension is disabled or auto-group is off, do nothing
-  if (extensionEnabled === false || autoGroupEnabled === false) {
+  // If auto-group is off, do nothing
+  if (autoGroupEnabled === false) {
     return;
   }
 
@@ -634,9 +629,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 // Set default settings on installation/update
 chrome.runtime.onInstalled.addListener(details => {
   if (details.reason === "install") {
-    // First-time install: set all features off by default
+    // First-time install: set defaults
     chrome.storage.local.set({
-      extensionEnabled: false,
+      extensionEnabled: true,
       autoGroupEnabled: true, // Set auto grouping enabled by default
       focusState: {
         active: false,
@@ -650,13 +645,17 @@ chrome.runtime.onInstalled.addListener(details => {
   } else if (details.reason === "update") {
     // Handle migration from old storage format to new
     chrome.storage.local.get([
-      "extensionEnabled",
-      "autoGroupEnabled", // Also check for this setting
+      "autoGroupEnabled", // Check for this setting
       "focusSessionActive", 
       "focusSessionEndTime",
       "blockedCategories",
       "focusState"
     ], result => {
+      // Always set extension to enabled
+      const update: Record<string, any> = {
+        extensionEnabled: true
+      };
+      
       // Migration: If we have old format data but no new focusState yet, convert it
       if (!result.focusState && (result.focusSessionActive || result.blockedCategories)) {
         console.log("Migrating from old focus session format to new focusState format");
@@ -671,31 +670,25 @@ chrome.runtime.onInstalled.addListener(details => {
         const blockedCategories = result.blockedCategories || [];
         const allowedContexts = knownContexts.filter(ctx => !blockedCategories.includes(ctx));
         
-        const focusState = {
+        update.focusState = {
           active: result.focusSessionActive === true,
           allowedContexts,
           endTime: result.focusSessionEndTime || undefined
         };
         
-        // Save the new format and clean up old keys
-        chrome.storage.local.set({ focusState }, () => {
-          // Remove old keys after migration
-          chrome.storage.local.remove([
-            "focusSessionActive", 
-            "focusSessionEndTime", 
-            "blockedCategories"
-          ]);
-        });
+        // Remove old keys after migration
+        chrome.storage.local.remove([
+          "focusSessionActive", 
+          "focusSessionEndTime", 
+          "blockedCategories"
+        ]);
       }
       
-      // Ensure we have explicit boolean values, not undefined
-      const update: Record<string, any> = {};
-      if (result.extensionEnabled === undefined) update.extensionEnabled = false;
+      // Ensure we have explicit boolean values, not undefined  
       if (result.autoGroupEnabled === undefined) update.autoGroupEnabled = true;
       
-      if (Object.keys(update).length > 0) {
-        chrome.storage.local.set(update);
-      }
+      // Apply all updates
+      chrome.storage.local.set(update);
     });
   }
 });
