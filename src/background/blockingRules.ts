@@ -69,7 +69,38 @@ export async function applyAllowedContexts(): Promise<void> {
           redirect: { url: BLOCKED_PAGE_URL }
         },
         condition: {
-          urlFilter: domains.join('|'),
+          requestDomains: domains,
+          resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME],
+          // Exclude all extensions and localhost from blocking
+          excludedInitiatorDomains: ['localhost', 'chrome-extension'],
+          // Only apply to new navigations, not history navigations
+          domainType: chrome.declarativeNetRequest.DomainType.FIRST_PARTY
+        }
+      });
+      
+      // DNR has a rule limit, so break if we hit it
+      if (rules.length >= MAX_DNR_RULES) {
+        console.warn(`Hit DNR rule limit of ${MAX_DNR_RULES}`);
+        break;
+      }
+    }
+    
+    // Add path-level overrides if any exist
+    const { pathOverrides = [] } = await chrome.storage.local.get('pathOverrides') as { 
+      pathOverrides: string[] 
+    };
+    
+    // Add each path override as a separate rule
+    for (const overridePath of pathOverrides) {
+      rules.push({
+        id: ruleId++,
+        priority: 2, // Higher priority than domain rules
+        action: { 
+          type: chrome.declarativeNetRequest.RuleActionType.REDIRECT, 
+          redirect: { url: BLOCKED_PAGE_URL } 
+        },
+        condition: {
+          urlFilter: `|${overridePath}|`,
           resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
         }
       });
@@ -87,7 +118,7 @@ export async function applyAllowedContexts(): Promise<void> {
       addRules: rules
     });
     
-    console.log(`[DNR] Applied ${rules.length} blocking rules for ${blockedContexts.length} contexts`);
+    console.log(`[DNR] Applied ${rules.length} blocking rules for ${blockedContexts.length} contexts and ${pathOverrides.length} path overrides`);
   } catch (error) {
     console.error("Error applying DNR rules:", error);
   }

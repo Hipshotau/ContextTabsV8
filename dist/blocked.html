@@ -3,87 +3,259 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Blocked by Focus Mode</title>
+  <title>Focus Check</title>
   <style>
     body {
-      background: #d32f2f;
+      background: #1976d2;
       color: #fff;
       font-family: Arial, sans-serif;
       text-align: center;
       padding-top: 50px;
+      margin: 0;
+      transition: background-color 0.5s;
+    }
+    .container {
+      max-width: 500px;
+      margin: 0 auto;
+      padding: 20px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
     }
     h1 {
       font-size: 2em;
       margin-bottom: 20px;
     }
-    #override {
-      background-color: #f5f5f5;
-      color: #d32f2f;
+    p {
+      margin-bottom: 15px;
+      font-size: 16px;
+      line-height: 1.4;
+    }
+    select, button {
+      background-color: white;
+      color: #1976d2;
       border: none;
       padding: 10px 15px;
       font-size: 16px;
       cursor: pointer;
-      margin-top: 20px;
+      margin: 10px 5px;
+      border-radius: 4px;
+      min-width: 200px;
     }
-    #override:hover {
-      background-color: #fff;
+    select {
+      text-align: center;
+    }
+    button:hover {
+      background-color: #f0f0f0;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
     }
     #remaining {
       font-size: 1.2em;
       margin-top: 20px;
     }
+    .choice-area {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 20px 0;
+    }
+    .buttons {
+      margin-top: 20px;
+    }
+    .timer {
+      font-size: 14px;
+      opacity: 0.8;
+      margin-top: 30px;
+    }
+    .highlight {
+      font-weight: bold;
+      color: #ffeb3b;
+    }
+    .on-track {
+      background: #43a047;
+    }
+    .off-track {
+      background: #e53935;
+    }
   </style>
 </head>
 <body>
-  <h1>⚠️ This site is blocked during Focus Mode</h1>
-  <p>Stay on track! Your focus is important.</p>
-  <div id="remaining">Session ends in <span id="countdown">--:--</span></div>
-  
-  <!-- Optional override button for emergencies (if you allow it): -->
-  <button id="override">Override (I really need this!)</button>
+  <div class="container">
+    <h1>⏱️ Focus Check</h1>
+    <p>This page was automatically categorized as <span id="detected-context" class="highlight">Unknown</span></p>
+    <p>Are you still on track with your focus goals?</p>
+    
+    <div class="choice-area">
+      <select id="context-selector">
+        <option value="" disabled selected>Select the correct context...</option>
+        <option value="Work">Work</option>
+        <option value="Development">Development</option>
+        <option value="Research">Research</option>
+        <option value="Learning">Learning</option>
+        <option value="Entertainment">Entertainment</option>
+        <option value="Social">Social</option>
+        <option value="Shopping">Shopping</option>
+        <option value="News">News</option>
+      </select>
+      
+      <div class="buttons">
+        <button id="save-continue">This is work-related, continue</button>
+        <button id="back-button">Go back, I'm off track</button>
+      </div>
+    </div>
+    
+    <div class="timer">
+      <div id="remaining">Focus session ends in <span id="countdown">--:--</span></div>
+    </div>
+  </div>
   
   <script>
+    // Get URL parameters to determine context
+    const urlParams = new URLSearchParams(window.location.search);
+    const detectedContext = urlParams.get('context') || 'Unknown';
+    const originalUrl = urlParams.get('url') || '';
+    const domain = originalUrl ? new URL(originalUrl).hostname : '';
+    
+    // Set detected context in UI
+    document.getElementById('detected-context').textContent = detectedContext;
+    
+    // Safe timer function with retry
+    async function safeGetTimeLeft() {
+      try {
+        return await chrome.runtime.sendMessage({ type: "GET_FOCUS_TIME_LEFT" });
+      } catch {
+        await new Promise(r => setTimeout(r, 100));  // wake‑up delay
+        return chrome.runtime.sendMessage({ type: "GET_FOCUS_TIME_LEFT" });
+      }
+    }
+    
     // Update countdown timer
     const updateCountdown = async () => {
-      try {
-        const response = await chrome.runtime.sendMessage({ type: "GET_FOCUS_TIME_LEFT" });
-        if (response && response.seconds !== undefined) {
-          if (response.seconds === -1) {
-            // Unlimited session
-            document.getElementById("countdown").textContent = "∞ (unlimited)";
-          } else if (response.seconds > 0) {
-            // Timed session - display mm:ss format
-            const mins = Math.floor(response.seconds / 60);
-            const secs = Math.floor(response.seconds % 60);
-            document.getElementById("countdown").textContent = 
-              `${mins}:${secs.toString().padStart(2, '0')}`;
-          } else {
-            // Session ended, reload the page
-            window.location.href = "about:blank";
-          }
-        } else {
-          document.getElementById("countdown").textContent = "--:--";
-        }
-      } catch (err) {
-        console.error("Error getting focus time:", err);
+      const resp = await safeGetTimeLeft();
+      const secs = resp?.seconds;
+      if (secs === -1) {
+        countdown.textContent = "∞ (unlimited)";
+        return;
       }
+      if (secs > 0) {
+        const m = Math.floor(secs / 60);
+        const s = Math.floor(secs % 60);
+        countdown.textContent = `${m}:${s.toString().padStart(2, "0")}`;
+        return;
+      }
+      window.location.href = "about:blank";
     };
     
-    // Setup countdown updater
+    // Initialize timer
     updateCountdown();
     setInterval(updateCountdown, 5000);
     
-    // Setup override button
-    const overrideBtn = document.getElementById("override");
-    if (overrideBtn) {
-      overrideBtn.addEventListener("click", () => {
-        chrome.runtime.sendMessage({ type: "OVERRIDE_BLOCK" }, response => {
-          if (response?.success) {
-            // Possibly close this tab or reload the site
-            window.location.href = response.url || "about:blank";
-          }
+    // Pre-select context from detected if available
+    if (detectedContext !== 'Unknown') {
+      const selector = document.getElementById('context-selector');
+      for (let i = 0; i < selector.options.length; i++) {
+        if (selector.options[i].value === detectedContext) {
+          selector.selectedIndex = i;
+          break;
+        }
+      }
+    }
+    
+    // Save context selection and continue to the site
+    document.getElementById('save-continue').addEventListener('click', async () => {
+      const selector = document.getElementById('context-selector');
+      const selectedContext = selector.value;
+      
+      if (!selectedContext) {
+        alert('Please select a context category first');
+        return;
+      }
+      
+      try {
+        // Get current focus state
+        const focusState = await chrome.runtime.sendMessage({ type: "FOCUS_STATUS" });
+        
+        // Check if the selected context is allowed
+        if (focusState && focusState.allowedContexts && !focusState.allowedContexts.includes(selectedContext)) {
+          document.body.classList.add('off-track');
+          alert(`Warning: ${selectedContext} context is not allowed during your current focus session`);
+          return;
+        }
+        
+        document.body.classList.add('on-track');
+        
+        // Save domain → context override
+        if (domain) {
+          await saveContextOverride(domain, selectedContext);
+        }
+        
+        // Add tab to temporarily unblocked
+        await chrome.runtime.sendMessage({ type: "OVERRIDE_BLOCK" });
+        
+        // If we have the original URL, navigate there
+        if (originalUrl) {
+          window.location.href = originalUrl;
+        } else {
+          // Otherwise, go to a safe site based on the selected context
+          navigateToContextSite(selectedContext);
+        }
+      } catch (err) {
+        console.error("Error saving context:", err);
+        alert("There was an error saving your selection. Please try again.");
+      }
+    });
+    
+    // Navigate back or to safe site
+    document.getElementById('back-button').addEventListener('click', () => {
+      history.back();
+      // If history.back() doesn't work, fall back to Google
+      setTimeout(() => {
+        window.location.href = "https://google.com";
+      }, 300);
+    });
+    
+    // Navigate to appropriate site based on context
+    function navigateToContextSite(context) {
+      const contextSites = {
+        'Work': 'https://docs.google.com',
+        'Development': 'https://github.com',
+        'Research': 'https://scholar.google.com',
+        'Learning': 'https://coursera.org',
+        'News': 'https://news.google.com',
+        'Social': 'https://linkedin.com',
+        'Shopping': 'https://google.com',
+        'Entertainment': 'https://google.com'
+      };
+      
+      window.location.href = contextSites[context] || 'https://google.com';
+    }
+    
+    // Save domain → context mapping override
+    async function saveContextOverride(domain, context) {
+      try {
+        // Get current map
+        const storage = await chrome.storage.local.get("domainContextMap");
+        const domainContextMap = storage.domainContextMap || {};
+        
+        // Update the mapping
+        domainContextMap[domain] = context;
+        
+        // Save back to storage
+        await chrome.storage.local.set({ domainContextMap });
+        
+        // Track this override for analytics
+        await chrome.runtime.sendMessage({ 
+          type: "CONTEXT_OVERRIDE", 
+          domain, 
+          originalContext: detectedContext,
+          newContext: context
         });
-      });
+        
+        console.log(`Context override saved: ${domain} → ${context}`);
+      } catch (err) {
+        console.error("Failed to save context override:", err);
+        throw err;
+      }
     }
   </script>
 </body>

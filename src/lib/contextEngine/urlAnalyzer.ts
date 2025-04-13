@@ -1,5 +1,5 @@
 // Known domain categories
-const DOMAIN_CATEGORIES: Record<string, string> = {
+export const DOMAIN_CATEGORIES: Record<string, string> = {
   // Work/Productivity
   "docs.google.com": "Work",
   "sheets.google.com": "Work",

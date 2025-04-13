@@ -3578,6 +3578,18 @@ async function handleContextUpdate(
   
   // Update badge when context changes
   updateBadge();
+  
+  // NEW: update domain → context map
+  const domain = extractDomain(contextData?.url || "");
+  if (domain) {
+    const { domainContextMap = {} } =
+      await chrome.storage.local.get("domainContextMap") as { domainContextMap: Record<string,string> };
+    if (domainContextMap[domain] !== context) {
+      domainContextMap[domain] = context;
+      await chrome.storage.local.set({ domainContextMap });
+      await applyAllowedContexts();          // rebuild rules right away
+    }
+  }
 }
 
 /**
@@ -3893,7 +3905,7 @@ export async function applyAllowedContexts(): Promise<void> {
           redirect: { url: BLOCKED_PAGE_URL }
         },
         condition: {
-          urlFilter: domains.join('|'),
+          requestDomains: domains,
           resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
         }
       });

@@ -2,13 +2,15 @@ import { groupTabByContext, onTabRemoved, ungroupAllTabs } from "../api/tabsApi"
 import { getStorage, setStorage, getFocusState, setFocusState } from "../api/storageApi";
 import { checkFocusStatus, showFocusNotification } from "../api/focusApi";
 import { classifyPageContext } from "../lib/contextEngine";
-import { extractDomain } from "../lib/contextEngine/urlAnalyzer";
+import { extractDomain, DOMAIN_CATEGORIES } from "../lib/contextEngine/urlAnalyzer";
 import { saveForLater, releaseParkedLinks, goBackOrClose } from "../api/parkedLinksApi";
 import * as focusEngine from "../lib/focusEngine";
 import { applyAllowedContexts } from "./blockingRules";
 
 const tabContextMap: Record<number, string> = {};
 const BLOCKED_PAGE_URL = chrome.runtime.getURL("blocked.html");
+// Track tabs that just came from the blocked page to prevent redirect loops
+const recentlyUnblockedTabs = new Set<number>();
 
 /**
  * Initialize the extension with proper default settings
@@ -18,6 +20,9 @@ async function initExtension(): Promise<void> {
   await setStorage({ extensionEnabled: true });
   
   console.log("[Background] Extension enabled.");
+  
+  // Pre-seed domain context map with known categories
+  await chrome.storage.local.set({ domainContextMap: DOMAIN_CATEGORIES });
   
   // Check for active sessions - now using the new focusState
   const focusState = await getFocusState();
@@ -33,6 +38,9 @@ async function initExtension(): Promise<void> {
       // Apply blocking rules for active focus session
       await applyAllowedContexts();
     }
+  } else {
+    // Apply blocking rules even if no active session to create initial rules
+    await applyAllowedContexts();
   }
   
   // Set up periodic checks
@@ -164,10 +172,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Required for async response
   }
   else if (request.type === "OVERRIDE_BLOCK") {
-    // Allow explicit override
-    // Just respond with success, this would unblock the tab 
-    // if we had a temporary block list
-    sendResponse({ success: true });
+    // Handle override request with more specific guidance
+    (async () => {
+      try {
+        // Get the tab that sent the request
+        const tabId = sender.tab?.id;
+        if (tabId) {
+          // Add this tab to the temporarily unblocked list
+          recentlyUnblockedTabs.add(tabId);
+          
+          // Remove from allowlist after 5 seconds
+          setTimeout(() => {
+            recentlyUnblockedTabs.delete(tabId);
+          }, 5000);
+          
+          // Return success
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ success: true });
+        }
+      } catch (error) {
+        console.error("Error handling override:", error);
+        sendResponse({ success: true }); // Still succeed to avoid blocking user
+      }
+    })();
     return true;
   }
   else if (request.type === "RESTORE_WORKSPACE") {
@@ -328,6 +356,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     return true; // Required for async response
   }
+  else if (request.type === "CONTEXT_OVERRIDE") {
+    // Handle context override (for analytics or future retraining)
+    console.log(`Context override: ${request.domain} from ${request.originalContext} to ${request.newContext}`);
+    
+    // We could log this for analytics or use it to improve the classifier
+    // For now, just acknowledge receipt
+    sendResponse({ success: true });
+    return true;
+  }
   
   return false; // No response needed for other messages
 });
@@ -375,6 +412,26 @@ async function handleContextUpdate(
   
   // Update badge when context changes
   updateBadge();
+  
+  // NEW: update domain → context map
+  const domain = extractDomain(contextData?.url || "");
+  if (domain) {
+    const { domainContextMap = {} } =
+      await chrome.storage.local.get("domainContextMap") as { domainContextMap: Record<string,string> };
+    if (domainContextMap[domain] !== context) {
+      domainContextMap[domain] = context;
+      await chrome.storage.local.set({ domainContextMap });
+      await applyAllowedContexts();          // rebuild rules right away
+      
+      // check if this context should be blocked and redirect immediately if so
+      if (await focusEngine.isBlocked(context)) {
+        const url = contextData?.url || "";
+        const blockedUrl = chrome.runtime.getURL("blocked.html") + 
+          `?context=${encodeURIComponent(context)}&url=${encodeURIComponent(url)}`;
+        chrome.tabs.update(tabId, { url: blockedUrl });
+      }
+    }
+  }
 }
 
 /**
@@ -544,6 +601,59 @@ chrome.storage.onChanged.addListener(async (changes) => {
   if (changes.focusState) {
     // Focus state has changed, update DNR rules
     await applyAllowedContexts();
+  }
+});
+
+// Block before navigation is committed
+chrome.webNavigation.onBeforeNavigate.addListener(async ({ tabId, frameId, url }) => {
+  if (frameId !== 0) return;                     // only top frame
+  
+  // Skip extension pages and about:blank
+  if (url.startsWith(chrome.runtime.getURL("")) || url === "about:blank") return;
+  
+  // Check if tab was recently unblocked - give it a pass
+  if (recentlyUnblockedTabs.has(tabId)) {
+    console.log(`[Block] Tab ${tabId} is in temporary allowlist, skipping check`);
+    return;
+  }
+  
+  const focusState = await getFocusState();
+  if (!focusState.active) return;
+
+  // Get current tab's URL to check if we're coming from blocked.html
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const currentUrl = tab.url || "";
+    
+    // If user is coming from the blocked page, allow them to navigate and add to temporary allowlist
+    if (currentUrl.includes("blocked.html")) {
+      console.log(`[Block] Tab ${tabId} coming from blocked page, allowing navigation`);
+      recentlyUnblockedTabs.add(tabId);
+      
+      // Remove from allowlist after 5 seconds
+      setTimeout(() => {
+        recentlyUnblockedTabs.delete(tabId);
+        console.log(`[Block] Tab ${tabId} removed from temporary allowlist`);
+      }, 5000);
+      
+      return;
+    }
+  } catch (err) {
+    // Continue if tab lookup fails
+  }
+
+  // Check if the domain is already classified and should be blocked
+  const domain = extractDomain(url);
+  const ctxMap = (await chrome.storage.local.get("domainContextMap")).domainContextMap || {};
+  const context = ctxMap[domain];
+  
+  // Only block if we have a context and it's not allowed
+  if (context && !focusState.allowedContexts.includes(context)) {
+    console.log(`[Block] Blocking domain ${domain} with context ${context}`);
+    // Pass context and original URL as query parameters
+    const blockedUrl = chrome.runtime.getURL("blocked.html") + 
+      `?context=${encodeURIComponent(context)}&url=${encodeURIComponent(url)}`;
+    chrome.tabs.update(tabId, { url: blockedUrl });
   }
 });
 

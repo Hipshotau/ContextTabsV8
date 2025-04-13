@@ -11,7 +11,9 @@
     "scripting",
     "sidePanel",
     "alarms",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "webNavigation"
   ],
   "host_permissions": [
     "<all_urls>"
