@@ -26,9 +26,16 @@ async function initContextDetection(): Promise<void> {
 function setupMutationObserver(): void {
   // Observe changes to the page content
   const observer = new MutationObserver(() => {
-    // Avoid excessive classifications by debouncing
+    // Skip if document is hidden (tab not visible)
+    if (document.hidden) return;
+    
+    // Use requestIdleCallback for better performance
     if (!contextDetectionTimer) {
-      scheduleContextCheck();
+      if ('requestIdleCallback' in window) {
+        window.requestIdleCallback(() => scheduleContextCheck(), { timeout: 2000 });
+      } else {
+        scheduleContextCheck();
+      }
     }
   });
   

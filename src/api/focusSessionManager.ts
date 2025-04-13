@@ -10,9 +10,6 @@ import { releaseParkedLinks } from "./parkedLinksApi";
 // Set up periodic badge updates
 let badgeUpdateInterval: number | undefined;
 
-// Flag to track if alarm listener is already set up
-let alarmListenerRegistered = false;
-
 /**
  * Start a Focus Session with a specified duration (minutes) and a set of blocked categories.
  * Activates all visual, auditory, and spatial cues for maximum ADHD-friendly feedback.
@@ -43,21 +40,6 @@ export async function startFocusSession(durationMinutes: number, blockedCategori
 
   // Update the badge and icon to indicate focus mode
   updateBadge(durationMinutes, false);
-  
-  // Set up alarms for badge updates instead of setInterval
-  chrome.alarms.create('badgeUpdate', { periodInMinutes: 0.2 });
-  
-  // Set up the alarm listener only once
-  if (!alarmListenerRegistered) {
-    chrome.alarms.onAlarm.addListener(async (alarm) => {
-      if (alarm.name !== 'badgeUpdate') return;
-      const timeLeft = await getFocusSessionTimeLeft();
-      const drifting = await checkIfDrifting();
-      updateBadge(timeLeft / 60, drifting); // Convert seconds to minutes
-    });
-    
-    alarmListenerRegistered = true;
-  }
   
   // Optionally launch a dedicated focus window
   const storage = await getStorage(["focusSettings"]);
@@ -100,9 +82,6 @@ export async function endFocusSession(saveWorkspace: boolean, workspaceName: str
   // Clear badge and restore icon
   chrome.action.setBadgeText({ text: "" });
   chrome.action.setIcon({ path: chrome.runtime.getURL('icons/icon48.png') });
-  
-  // Clear the alarms
-  chrome.alarms.clear('badgeUpdate');
   
   // Close focus window if it exists
   await closeFocusWindow();

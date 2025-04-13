@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Blocked by Focus Mode</title>
   <style>
     body {
@@ -46,16 +47,22 @@
     const updateCountdown = async () => {
       try {
         const response = await chrome.runtime.sendMessage({ type: "GET_FOCUS_TIME_LEFT" });
-        if (response && response.seconds) {
-          const mins = Math.floor(response.seconds / 60);
-          const secs = Math.floor(response.seconds % 60);
-          document.getElementById("countdown").textContent = 
-            `${mins}:${secs.toString().padStart(2, '0')}`;
-          
-          if (response.seconds <= 0) {
+        if (response && response.seconds !== undefined) {
+          if (response.seconds === -1) {
+            // Unlimited session
+            document.getElementById("countdown").textContent = "∞ (unlimited)";
+          } else if (response.seconds > 0) {
+            // Timed session - display mm:ss format
+            const mins = Math.floor(response.seconds / 60);
+            const secs = Math.floor(response.seconds % 60);
+            document.getElementById("countdown").textContent = 
+              `${mins}:${secs.toString().padStart(2, '0')}`;
+          } else {
             // Session ended, reload the page
             window.location.reload();
           }
+        } else {
+          document.getElementById("countdown").textContent = "--:--";
         }
       } catch (err) {
         console.error("Error getting focus time:", err);

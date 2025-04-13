@@ -51,16 +51,35 @@ const DEFAULT_CONTEXT_KEYWORDS: Record<string, Record<string, number>> = {
   }
 };
 
+// Cache for context keywords to avoid storage hits
+let keywordsCache: Record<string, Record<string, number>> | null = null;
+
+// Setup storage change listener to invalidate cache
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.contextKeywords) {
+    // Clear the cache when keywords are updated
+    keywordsCache = null;
+  }
+});
+
 /**
- * Load context keywords from storage or use defaults
+ * Get context keywords with caching
  */
 export async function getContextKeywords(): Promise<Record<string, Record<string, number>>> {
+  // Return from cache if available
+  if (keywordsCache !== null) {
+    return keywordsCache;
+  }
+  
   try {
     const { contextKeywords } = await chrome.storage.local.get("contextKeywords") as Pick<StorageData, "contextKeywords">;
-    return contextKeywords || DEFAULT_CONTEXT_KEYWORDS;
+    // Store in cache
+    keywordsCache = contextKeywords || DEFAULT_CONTEXT_KEYWORDS;
+    return keywordsCache;
   } catch (error) {
     console.error("Error loading context keywords:", error);
-    return DEFAULT_CONTEXT_KEYWORDS;
+    keywordsCache = DEFAULT_CONTEXT_KEYWORDS;
+    return keywordsCache;
   }
 }
 

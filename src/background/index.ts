@@ -1,7 +1,6 @@
 import { groupTabByContext, onTabRemoved, ungroupAllTabs } from "../api/tabsApi";
 import { getStorage, setStorage, getFocusState, setFocusState } from "../api/storageApi";
 import { checkFocusStatus, showFocusNotification } from "../api/focusApi";
-import { restoreWorkspace } from "../api/focusSessionManager";
 import { classifyPageContext } from "../lib/contextEngine";
 import { extractDomain } from "../lib/contextEngine/urlAnalyzer";
 import { saveForLater, releaseParkedLinks, goBackOrClose } from "../api/parkedLinksApi";
@@ -43,26 +42,31 @@ async function initExtension(): Promise<void> {
  * Set up all periodic checks needed for the extension
  */
 function setupPeriodicChecks() {
-  // Periodic check for session end
-  setInterval(checkFocusSessionStatus, 30000); // check every 30s
+  // Set up alarms for periodic checks - minimum 1 minute for MV3
+  chrome.alarms.create('focusTick', { periodInMinutes: 1 });     // 60s - check session status
+  chrome.alarms.create('focusDrift', { periodInMinutes: 2 });    // 120s - check drift (less urgent)
   
-  // More frequent check for focus loss during active sessions
-  setInterval(async () => {
+  // Handle alarms
+  chrome.alarms.onAlarm.addListener(async ({ name }) => {
     try {
-      const isSessionActive = await focusEngine.isActive();
-      if (isSessionActive) {
-        const focusStatus = await checkFocusStatus();
-        if (focusStatus.isLostFocus) {
-          // Immediately send a drift warning if focus is lost
-          await sendDriftWarning(focusStatus);
+      if (name === 'focusTick') {
+        await checkFocusSessionStatus();
+      } else if (name === 'focusDrift') {
+        const isSessionActive = await focusEngine.isActive();
+        if (isSessionActive) {
+          const focusStatus = await checkFocusStatus();
+          if (focusStatus.isLostFocus) {
+            // Immediately send a drift warning if focus is lost
+            await sendDriftWarning(focusStatus);
+          }
         }
-        // Update badge regardless
-        updateBadge();
       }
+      // Update badge for all alarm types
+      await updateBadge();
     } catch (err) {
-      console.error("Error in focus check interval:", err);
+      console.error(`Error in alarm handler (${name}):`, err);
     }
-  }, 10000); // Check every 10 seconds during active sessions
+  });
 }
 
 /**
@@ -126,7 +130,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Indicates async response
   }
   else if (request.type === "END_FOCUS_SESSION") {
-    focusEngine.end()
+    const { saveWorkspaceName } = request.payload || {};
+    focusEngine.end(saveWorkspaceName)
       .then(() => sendResponse({ success: true }))
       .catch((err) => {
         console.error("Error ending focus session:", err);
@@ -135,11 +140,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Required for async response
   }
   else if (request.type === "GET_FOCUS_TIME_LEFT") {
-    getFocusState()
-      .then(focusState => {
-        const seconds = focusState.endTime
-          ? Math.max(0, (focusState.endTime - Date.now()) / 1000)
-          : 0;
+    focusEngine.getTimeLeft()
+      .then(seconds => {
         sendResponse({ seconds });
       })
       .catch(error => {
@@ -157,7 +159,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   else if (request.type === "RESTORE_WORKSPACE") {
     const { name } = request.payload || {};
-    restoreWorkspace(name)
+    focusEngine.restoreWorkspace(name)
       .then(() => sendResponse({ success: true }))
       .catch((err) => {
         console.error(err);
@@ -372,11 +374,15 @@ async function updateBadge(): Promise<void> {
     }
     
     // Check if we're showing focus time or context switches
-    const focusTimeLeft = await focusEngine.getTimeLeft();
+    const focusTimeLeftSeconds = await focusEngine.getTimeLeft();
     
-    if (focusTimeLeft > 0) {
-      // Convert seconds to minutes for badge
-      const minutesLeft = Math.ceil(focusTimeLeft / 60);
+    if (focusTimeLeftSeconds === -1) {
+      // Unlimited session - show infinity symbol
+      chrome.action.setBadgeText({ text: "∞" });
+      chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue
+    } else if (focusTimeLeftSeconds > 0) {
+      // Display minutes remaining for badge (rounded up)
+      const minutesLeft = Math.ceil(focusTimeLeftSeconds / 60);
       chrome.action.setBadgeText({ text: minutesLeft.toString() });
       
       // Get focus status to determine color
@@ -478,21 +484,30 @@ async function sendDriftWarning(focusStatus: any): Promise<void> {
  */
 function setupFocusSessionUrlBlocking(): void {
   // Listen for tab updates (URL changes)
-  chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     // Only check for URL changes
     if (changeInfo.url && tab.url) {
-      try {
-        // Check if this URL should be blocked
-        const shouldBlock = await checkIfUrlShouldBeBlocked(tab.url);
-        if (shouldBlock) {
-          console.log(`[Focus] Blocking URL: ${tab.url}`);
-          
-          // Use standard BLOCKED_PAGE_URL for consistency with drift warnings
-          chrome.tabs.update(tabId, { url: BLOCKED_PAGE_URL });
+      const url = tab.url; // ensure we have a stable copy of the URL string
+      // Handle URL check asynchronously but don't block listener return
+      (async () => {
+        try {
+          // Check if this URL should be blocked
+          const shouldBlock = await checkIfUrlShouldBeBlocked(url);
+          if (shouldBlock) {
+            console.log(`[Focus] Blocking URL: ${url}`);
+            
+            // Use standard BLOCKED_PAGE_URL for consistency with drift warnings
+            try {
+              await chrome.tabs.update(tabId, { url: BLOCKED_PAGE_URL });
+            } catch (error) {
+              // Navigation might already be in progress, just log and continue
+              console.log("Tab navigation error (likely already navigating):", error);
+            }
+          }
+        } catch (error) {
+          console.error("Error checking URL:", error);
         }
-      } catch (error) {
-        console.error("Error checking URL:", error);
-      }
+      })();
     }
   });
 }
@@ -528,11 +543,11 @@ async function checkIfUrlShouldBeBlocked(url: string): Promise<boolean> {
 }
 
 /**
- * Periodically check if a focus session should be ended
+ * Check if a focus session should be ended
  */
 async function checkFocusSessionStatus(): Promise<void> {
-  const timeLeft = await focusEngine.getTimeLeft();
-  if (timeLeft <= 0) {
+  const endTime = (await getFocusState()).endTime;
+  if (endTime && Date.now() >= endTime) {
     const active = await focusEngine.isActive();
     if (active) {
       // Focus session time is up
