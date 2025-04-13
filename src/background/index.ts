@@ -5,6 +5,7 @@ import { classifyPageContext } from "../lib/contextEngine";
 import { extractDomain } from "../lib/contextEngine/urlAnalyzer";
 import { saveForLater, releaseParkedLinks, goBackOrClose } from "../api/parkedLinksApi";
 import * as focusEngine from "../lib/focusEngine";
+import { applyAllowedContexts } from "./blockingRules";
 
 const tabContextMap: Record<number, string> = {};
 const BLOCKED_PAGE_URL = chrome.runtime.getURL("blocked.html");
@@ -28,11 +29,11 @@ async function initExtension(): Promise<void> {
       await setFocusState({ active: false, endTime: undefined });
     } else {
       console.log(`[Background] Focus session continues until ${new Date(focusState.endTime).toLocaleTimeString()}`);
+      
+      // Apply blocking rules for active focus session
+      await applyAllowedContexts();
     }
   }
-  
-  // Setup URL blocking for Focus Session - always setup the handler
-  setupFocusSessionUrlBlocking();
   
   // Set up periodic checks
   setupPeriodicChecks();
@@ -111,22 +112,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return false; // No response needed
   }
   else if (request.type === "START_FOCUS_SESSION") {
-    const { durationMinutes, blockedCategories } = request.payload || {};
+    const { durationMinutes, allowedContexts } = request.payload || {};
     
-    const KNOWN_CONTEXTS = [
-      "Work", "Development", "Research", "Learning",
-      "Entertainment", "Social", "Shopping", "News"
-    ];
-    const allowedContexts = KNOWN_CONTEXTS.filter(
-      ctx => !blockedCategories?.includes(ctx)
-    );
-    
-    focusEngine.start(allowedContexts, durationMinutes)
-      .then(() => sendResponse({ success: true }))
-      .catch((err) => {
-        console.error(err);
-        sendResponse({ success: false, error: err.message });
-      });
+    // Use allowedContexts directly if provided, otherwise fallback to blockedCategories
+    if (allowedContexts) {
+      focusEngine.start(allowedContexts, durationMinutes)
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => {
+          console.error(err);
+          sendResponse({ success: false, error: err.message });
+        });
+    } else {
+      // Legacy support: convert blockedCategories to allowedContexts
+      const { blockedCategories } = request.payload || {};
+      const KNOWN_CONTEXTS = [
+        "Work", "Development", "Research", "Learning",
+        "Entertainment", "Social", "Shopping", "News"
+      ];
+      const allowedContexts = KNOWN_CONTEXTS.filter(
+        ctx => !blockedCategories?.includes(ctx)
+      );
+      
+      focusEngine.start(allowedContexts, durationMinutes)
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => {
+          console.error(err);
+          sendResponse({ success: false, error: err.message });
+        });
+    }
     return true; // Indicates async response
   }
   else if (request.type === "END_FOCUS_SESSION") {
@@ -320,17 +333,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 /**
- * Toggle focus mode on/off
+ * Handle any focus mode toggle (enable/disable)
  */
 async function toggleFocusMode(enabled: boolean): Promise<void> {
+  // This is a legacy function, but we'll keep it for compatibility with older UIs
   if (enabled) {
-    // Just update badge in the new approach
-    updateBadge();
+    // Legacy function, start with default settings
+    await focusEngine.start(["Work", "Development", "Research", "Learning"]);
+    
+    // Apply DNR blocking rules
+    await applyAllowedContexts();
   } else {
-    // Ungroup all tabs when focus mode is disabled
-    await ungroupAllTabs();
-    // Clear badge when focus mode is disabled
-    chrome.action.setBadgeText({ text: "" });
+    // Turn off focus mode
+    await focusEngine.end();
+    
+    // Remove all blocking rules
+    await applyAllowedContexts();
   }
 }
 
@@ -360,53 +378,21 @@ async function handleContextUpdate(
 }
 
 /**
- * Updates the badge with current context switch count
+ * Updates the badge with current focus status
  */
 async function updateBadge(): Promise<void> {
   try {
-    // Update to use the new focusState instead of focusModeEnabled
     const focusState = await getFocusState();
     
-    // If focus mode is not active, don't show badge
+    // If not in focus mode, clear badge
     if (!focusState.active) {
       chrome.action.setBadgeText({ text: "" });
       return;
     }
     
-    // Check if we're showing focus time or context switches
-    const focusTimeLeftSeconds = await focusEngine.getTimeLeft();
-    
-    if (focusTimeLeftSeconds === -1) {
-      // Unlimited session - show infinity symbol
-      chrome.action.setBadgeText({ text: "∞" });
-      chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue
-    } else if (focusTimeLeftSeconds > 0) {
-      // Display minutes remaining for badge (rounded up)
-      const minutesLeft = Math.ceil(focusTimeLeftSeconds / 60);
-      chrome.action.setBadgeText({ text: minutesLeft.toString() });
-      
-      // Get focus status to determine color
-      const focusStatus = await checkFocusStatus();
-      if (focusStatus.isLostFocus) {
-        chrome.action.setBadgeBackgroundColor({ color: "#d32f2f" }); // Red for lost focus
-      } else {
-        chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue for focused
-      }
-    } else {
-      // Show context switch count if no timer active
-      const focusStatus = await checkFocusStatus();
-      const switchCount = focusStatus.contextSwitches.length;
-      
-      // Set badge with context switch count
-      chrome.action.setBadgeText({ text: switchCount.toString() });
-      
-      // Change color if focus is lost
-      if (focusStatus.isLostFocus) {
-        chrome.action.setBadgeBackgroundColor({ color: "#d32f2f" }); // Red for lost focus
-      } else {
-        chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue for focused
-      }
-    }
+    // Show a simple indicator
+    chrome.action.setBadgeText({ text: "•" });
+    chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue
   } catch (error) {
     console.error("Error updating badge:", error);
   }
@@ -480,66 +466,11 @@ async function sendDriftWarning(focusStatus: any): Promise<void> {
 }
 
 /**
- * Sets up URL blocking based on focus session
+ * Sets up blocking when a focus session is active
+ * This is a no-op now because we use DNR rules for blocking
  */
 function setupFocusSessionUrlBlocking(): void {
-  // Listen for tab updates (URL changes)
-  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    // Only check for URL changes
-    if (changeInfo.url && tab.url) {
-      const url = tab.url; // ensure we have a stable copy of the URL string
-      // Handle URL check asynchronously but don't block listener return
-      (async () => {
-        try {
-          // Check if this URL should be blocked
-          const shouldBlock = await checkIfUrlShouldBeBlocked(url);
-          if (shouldBlock) {
-            console.log(`[Focus] Blocking URL: ${url}`);
-            
-            // Use standard BLOCKED_PAGE_URL for consistency with drift warnings
-            try {
-              await chrome.tabs.update(tabId, { url: BLOCKED_PAGE_URL });
-            } catch (error) {
-              // Navigation might already be in progress, just log and continue
-              console.log("Tab navigation error (likely already navigating):", error);
-            }
-          }
-        } catch (error) {
-          console.error("Error checking URL:", error);
-        }
-      })();
-    }
-  });
-}
-
-/**
- * Check if URL should be blocked according to focus state and context
- */
-async function checkIfUrlShouldBeBlocked(url: string): Promise<boolean> {
-  // Get the focus state
-  const focusState = await getFocusState();
-  
-  // If focus is not active, nothing is blocked
-  if (!focusState.active) {
-    return false;
-  }
-  
-  try {
-    // Classify the URL's context
-    const contextData = await getContextData(url);
-    const context = contextData?.context;
-    
-    if (!context) {
-      // If we can't determine the context, don't block
-      return false;
-    }
-    
-    // Use focusEngine to check if this context is blocked
-    return focusEngine.isBlocked(context);
-  } catch (error) {
-    console.error("Error classifying URL:", error);
-    return false;
-  }
+  // No action needed - DNR rules handle blocking
 }
 
 /**
@@ -608,36 +539,11 @@ async function updateContextWeights(url: string): Promise<void> {
   await saveContextData(url, contextData);
 }
 
-// Modify the tabs.onUpdated handler to remove timer-related code
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // Check if the tab has completed loading
-  if (changeInfo.status === 'complete' && tab.url && !tab.url.startsWith('chrome://')) {
-    // Start a short delay to allow any content scripts to initialize
-    setTimeout(() => {
-      // Remove timer-related code
-      // if (activeTimer && activeTimer.active && activeTimer.endTime > Date.now()) {
-      //   // Target just this specific tab
-      //   chrome.scripting.executeScript({
-      //     target: { tabId },
-      //     func: () => {
-      //       // Force content script to re-check for timer
-      //       chrome.runtime.sendMessage({ type: "CONTENT_SCRIPT_READY" });
-      //     }
-      //   }).catch(err => {
-      //     // Ignore errors for restricted pages
-      //   });
-      //   
-      //   // Send the timer state to the newly loaded tab
-      //   chrome.tabs.sendMessage(tabId, {
-      //     type: 'RESTORE_FOCUS_TIMER',
-      //     timerState: activeTimer
-      //   }).catch(err => {
-      //     console.log('Tab not ready yet, will use script injection instead');
-      //     // Use script injection as fallback
-      //     ensureTimerVisibility();
-      //   });
-      // }
-    }, 500);
+// Add listeners for focus state changes to update DNR rules
+chrome.storage.onChanged.addListener(async (changes) => {
+  if (changes.focusState) {
+    // Focus state has changed, update DNR rules
+    await applyAllowedContexts();
   }
 });
 

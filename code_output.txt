@@ -2,71 +2,82 @@
 ################################################################################
 const path = require("path");
 const CopyPlugin = require("copy-webpack-plugin");
+const { CleanWebpackPlugin } = require("clean-webpack-plugin");
 
-module.exports = [
-  {
-    name: 'ui',
-    mode: "production",
-    devtool: "source-map",
-    entry: {
-      content: "./src/content/index.ts",
-      popup: "./src/popup/popup.ts",
-      options: "./src/options/options.ts",
-      sidepanel: "./src/sidepanel/index.ts",
-      "sidepanel-timer": "./src/sidepanel/sidepanel-timer.js"
-    },
-    output: {
-      path: path.resolve(__dirname, "dist"),
-      filename: "[name].js"
-    },
-    resolve: {
-      extensions: [".ts", ".js"]
-    },
-    module: {
-      rules: [
-        {
-          test: /\.tsx?$/,
-          use: "ts-loader",
-          exclude: /node_modules/
-        }
-      ]
-    },
-    plugins: [
-      new CopyPlugin({
-        patterns: [
-          { from: "src/popup/popup.html", to: "popup.html" },
-          { from: "src/options/options.html", to: "options.html" },
-          { from: "src/sidepanel/index.html", to: "sidepanel.html" },
-          { from: "src/sidepanel/sidepanel-timer.html", to: "sidepanel-timer.html" },
-          { from: "src/blocked.html", to: "blocked.html" },
-          { from: "src/onboarding.html", to: "onboarding.html", noErrorOnMissing: true },
-          { from: "manifest.json", to: "manifest.json" },
-          { from: "icons", to: "icons" },
-          { from: "src/sounds", to: "sounds", noErrorOnMissing: true }
-        ]
-      })
+/* Clean compiler that only wipes the folder */
+const clean = {
+  name: "clean",
+  mode: "production",
+  output: { path: path.resolve(__dirname, "dist") },
+  plugins: [ new CleanWebpackPlugin() ]
+};
+
+/* UI compiler (without CleanWebpackPlugin) */
+const ui = {
+  name: 'ui',
+  mode: "production",
+  devtool: "source-map",
+  entry: {
+    content: "./src/content/index.ts",
+    popup: "./src/popup/popup.ts",
+    options: "./src/options/options.ts",
+    sidepanel: "./src/sidepanel/index.ts"
+  },
+  output: {
+    path: path.resolve(__dirname, "dist"),
+    filename: "[name].js"
+  },
+  resolve: {
+    extensions: [".ts", ".js"]
+  },
+  module: {
+    rules: [
+      {
+        test: /\.tsx?$/,
+        use: "ts-loader",
+        exclude: /node_modules/
+      }
     ]
   },
-  {
-    name: 'bg',
-    mode: 'production',
-    target: 'webworker',
-    devtool: 'source-map',
-    entry: { background: './src/background/index.ts' },
-    output: { 
-      path: path.resolve(__dirname, 'dist'),
-      filename: '[name].js' 
-    },
-    resolve: { extensions: ['.ts', '.js'] },
-    module: { 
-      rules: [{ 
-        test: /\.tsx?$/, 
-        use: 'ts-loader', 
-        exclude: /node_modules/ 
-      }] 
-    }
+  plugins: [
+    new CopyPlugin({
+      patterns: [
+        { from: "src/popup/popup.html", to: "popup.html" },
+        { from: "src/options/options.html", to: "options.html" },
+        { from: "src/sidepanel/index.html", to: "sidepanel.html" },
+        { from: "src/blocked.html", to: "blocked.html" },
+        { from: "src/onboarding.html", to: "onboarding.html", noErrorOnMissing: true },
+        { from: "manifest.json", to: "manifest.json" },
+        { from: "icons", to: "icons" },
+        { from: "src/sounds", to: "sounds", noErrorOnMissing: true }
+      ]
+    })
+  ]
+};
+
+/* Background compiler */
+const bg = {
+  name: 'bg',
+  mode: 'production',
+  target: 'webworker',
+  devtool: 'source-map',
+  entry: { background: './src/background/index.ts' },
+  output: { 
+    path: path.resolve(__dirname, 'dist'),
+    filename: '[name].js' 
+  },
+  resolve: { extensions: ['.ts', '.js'] },
+  module: { 
+    rules: [{ 
+      test: /\.tsx?$/, 
+      use: 'ts-loader', 
+      exclude: /node_modules/ 
+    }] 
   }
-];
+};
+
+/* Export all three - webpack will run them in order */
+module.exports = [clean, ui, bg];
 
 # ./src/blocked.html
 ################################################################################
@@ -74,6 +85,7 @@ module.exports = [
 <html>
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Blocked by Focus Mode</title>
   <style>
     body {
@@ -118,16 +130,22 @@ module.exports = [
     const updateCountdown = async () => {
       try {
         const response = await chrome.runtime.sendMessage({ type: "GET_FOCUS_TIME_LEFT" });
-        if (response && response.seconds) {
-          const mins = Math.floor(response.seconds / 60);
-          const secs = Math.floor(response.seconds % 60);
-          document.getElementById("countdown").textContent = 
-            `${mins}:${secs.toString().padStart(2, '0')}`;
-          
-          if (response.seconds <= 0) {
+        if (response && response.seconds !== undefined) {
+          if (response.seconds === -1) {
+            // Unlimited session
+            document.getElementById("countdown").textContent = "∞ (unlimited)";
+          } else if (response.seconds > 0) {
+            // Timed session - display mm:ss format
+            const mins = Math.floor(response.seconds / 60);
+            const secs = Math.floor(response.seconds % 60);
+            document.getElementById("countdown").textContent = 
+              `${mins}:${secs.toString().padStart(2, '0')}`;
+          } else {
             // Session ended, reload the page
-            window.location.reload();
+            window.location.href = "about:blank";
           }
+        } else {
+          document.getElementById("countdown").textContent = "--:--";
         }
       } catch (err) {
         console.error("Error getting focus time:", err);
@@ -160,6 +178,7 @@ module.exports = [
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Focus Session</title>
   <style>
     :root {
@@ -264,6 +283,7 @@ module.exports = [
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Welcome to Context Focus</title>
   <style>
     body {
@@ -727,275 +747,6 @@ export function showFocusNotification(contextSwitches: ContextSwitch[]): void {
   });
 }
 
-# ./src/api/focusSessionManager.ts
-################################################################################
-import { getStorage, setStorage, getFocusState, setFocusState } from "./storageApi";
-import { StorageData } from "../types/index";
-import { groupTabByContext, ungroupAllTabs } from "./tabsApi";
-import { classifyPageContext } from "../lib/contextEngine";
-import { extractDomain } from "../lib/contextEngine/urlAnalyzer";
-import { launchFocusWindow, closeFocusWindow } from "../lib/windows/focusWindow";
-import { openSidePanel, closeSidePanel } from "../lib/panels/sidePanelManager";
-import { releaseParkedLinks } from "./parkedLinksApi";
-
-// Set up periodic badge updates
-let badgeUpdateInterval: number | undefined;
-
-// Flag to track if alarm listener is already set up
-let alarmListenerRegistered = false;
-
-/**
- * Start a Focus Session with a specified duration (minutes) and a set of blocked categories.
- * Activates all visual, auditory, and spatial cues for maximum ADHD-friendly feedback.
- */
-export async function startFocusSession(durationMinutes: number, blockedCategories: string[]): Promise<void> {
-  const now = Date.now();
-  const endTime = now + durationMinutes * 60_000;
-
-  // Convert blockedCategories to allowedContexts by excluding them from all known contexts
-  const knownContexts = [
-    "Work", "Development", "Research", "Learning", 
-    "Entertainment", "Social", "Shopping", "News"
-  ];
-  const allowedContexts = knownContexts.filter(ctx => !blockedCategories.includes(ctx));
-
-  // Mark focus session as active using the new focusState object
-  await setFocusState({
-    active: true,
-    allowedContexts,
-    endTime
-  });
-
-  // Also store blockedCategories for backward compatibility with UI
-  await setStorage({ blockedCategories });
-
-  // Open the side panel for persistent timer display
-  await openSidePanel();
-
-  // Update the badge and icon to indicate focus mode
-  updateBadge(durationMinutes, false);
-  
-  // Set up alarms for badge updates instead of setInterval
-  chrome.alarms.create('badgeUpdate', { periodInMinutes: 0.2 });
-  
-  // Set up the alarm listener only once
-  if (!alarmListenerRegistered) {
-    chrome.alarms.onAlarm.addListener(async (alarm) => {
-      if (alarm.name !== 'badgeUpdate') return;
-      const timeLeft = await getFocusSessionTimeLeft();
-      const drifting = await checkIfDrifting();
-      updateBadge(timeLeft / 60, drifting); // Convert seconds to minutes
-    });
-    
-    alarmListenerRegistered = true;
-  }
-  
-  // Optionally launch a dedicated focus window
-  const storage = await getStorage(["focusSettings"]);
-  const focusWindowEnabled = storage.focusSettings?.focusWindowEnabled || false;
-  if (focusWindowEnabled) {
-    await launchFocusWindow();
-  }
-
-  // Show notification
-  chrome.notifications.create({
-    type: 'basic',
-    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
-    title: 'Focus Session Started',
-    message: `Focus session started for ${durationMinutes} minutes. Stay focused!`,
-  });
-}
-
-/**
- * End the current Focus Session.
- * Optionally save the workspace (tab groups) if user requests.
- */
-export async function endFocusSession(saveWorkspace: boolean, workspaceName: string = ""): Promise<void> {
-  // If user wants to save workspace, store it
-  if (saveWorkspace && workspaceName) {
-    await saveCurrentWorkspace(workspaceName);
-  }
-
-  // Clear focus state using the new API
-  await setFocusState({
-    active: false,
-    endTime: undefined
-  });
-  
-  // Close the side panel
-  await closeSidePanel();
-  
-  // Ungroup all tabs
-  await ungroupAllTabs();
-  
-  // Clear badge and restore icon
-  chrome.action.setBadgeText({ text: "" });
-  chrome.action.setIcon({ path: chrome.runtime.getURL('icons/icon48.png') });
-  
-  // Clear the alarms
-  chrome.alarms.clear('badgeUpdate');
-  
-  // Close focus window if it exists
-  await closeFocusWindow();
-  
-  // Show end notification
-  chrome.notifications.create({
-    type: 'basic',
-    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
-    title: 'Focus Session Ended',
-    message: `Great job! Your focus session has ended.`,
-  });
-  
-  // Release any links that were parked during the session
-  await releaseParkedLinks();
-}
-
-/**
- * Updates the badge text and color based on session state
- */
-function updateBadge(timeLeftMin: number, drifting: boolean) {
-  chrome.action.setBadgeBackgroundColor({
-    color: drifting ? "#d32f2f" : "#1565c0"  // red if drifting, blue otherwise
-  });
-  
-  chrome.action.setBadgeText({
-    text: timeLeftMin > 0 ? Math.ceil(timeLeftMin).toString() : ""
-  });
-  
-  chrome.action.setIcon({
-    path: drifting ? 
-      chrome.runtime.getURL('icons/icon48.png') : // Would be focus_drift.png if it existed
-      chrome.runtime.getURL('icons/icon48.png')   // Would be focus_on.png if it existed
-  });
-}
-
-/**
- * Check if the user is currently drifting from focus
- */
-async function checkIfDrifting(): Promise<boolean> {
-  const { focusSettings } = await getStorage(["focusSettings"]);
-  if (!focusSettings) return false;
-  
-  // For now, we'll just use a simple check based on the existing focus API
-  const response = await chrome.runtime.sendMessage({ type: "CHECK_FOCUS_STATUS" });
-  return response?.isLostFocus || false;
-}
-
-/**
- * Check if a focus session is currently active
- */
-export async function isFocusSessionActive(): Promise<boolean> {
-  const focusState = await getFocusState();
-  return focusState.active;
-}
-
-/**
- * Returns how many seconds remain in the current focus session (if any)
- */
-export async function getFocusSessionTimeLeft(): Promise<number> {
-  const focusState = await getFocusState();
-  if (!focusState.active || !focusState.endTime) return 0;
-
-  const now = Date.now();
-  const diff = focusState.endTime - now;
-  return diff > 0 ? diff / 1000 : 0;   // Return seconds, not minutes
-}
-
-/**
- * Determine if this URL is blocked under the current Focus Session settings.
- */
-export async function isUrlBlocked(url: string, detectedCategory: string): Promise<boolean> {
-  const focusState = await getFocusState();
-
-  // If session not active, not blocked
-  if (!focusState.active) {
-    return false;
-  }
-
-  // If the context is not in allowed contexts, block it
-  if (detectedCategory && !focusState.allowedContexts.includes(detectedCategory)) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
- * Save current window's tab groups (workspace).
- * This can be called at the end of a Focus Session or on demand.
- */
-export async function saveCurrentWorkspace(name: string): Promise<void> {
-  // Get all tab groups
-  const groups = await chrome.tabGroups.query({});
-  // For each group, gather tab URLs
-  const workspaceGroups = await Promise.all(
-    groups.map(async (grp) => {
-      const tabs = await chrome.tabs.query({ groupId: grp.id });
-      return {
-        groupId: grp.id,
-        title: grp.title || "",
-        color: grp.color,
-        tabUrls: tabs.map(t => t.url || "")
-      };
-    })
-  );
-
-  // Store in savedWorkspaces
-  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
-  const newWorkspaceEntry = {
-    name,
-    tabGroups: workspaceGroups,
-    timestamp: Date.now()
-  };
-
-  const updatedWorkspaces = Array.isArray(savedWorkspaces) 
-    ? [...savedWorkspaces, newWorkspaceEntry]
-    : [newWorkspaceEntry];
-
-  await setStorage({ savedWorkspaces: updatedWorkspaces });
-}
-
-/**
- * Restore a saved workspace by name. 
- * Re-open tabs and re-create groups (approximation).
- */
-export async function restoreWorkspace(name: string): Promise<void> {
-  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
-  if (!savedWorkspaces) return;
-
-  const workspace = savedWorkspaces.find(ws => ws.name === name);
-  if (!workspace) return;
-
-  // For each group, re-create tabs
-  for (const grp of workspace.tabGroups) {
-    // Open each tab
-    const tabIds = [];
-    for (const url of grp.tabUrls) {
-      const createdTab = await chrome.tabs.create({ url, active: false });
-      tabIds.push(createdTab.id as number);
-    }
-    // Create or update tab group
-    if (tabIds.length > 0) {
-      const newGroupId = await chrome.tabs.group({ tabIds });
-      await chrome.tabGroups.update(newGroupId, {
-        title: grp.title || "",
-        color: grp.color
-      });
-    }
-  }
-}
-
-/**
- * Clean up old workspace entries if needed, or remove a workspace by name, etc.
- */
-export async function removeWorkspace(name: string): Promise<void> {
-  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
-  if (!savedWorkspaces) return;
-
-  const updatedWorkspaces = savedWorkspaces.filter(ws => ws.name !== name);
-  await setStorage({ savedWorkspaces: updatedWorkspaces });
-} 
-
 # ./src/api/parkedLinksApi.ts
 ################################################################################
 import { getStorage, setStorage } from "./storageApi";
@@ -1264,13 +1015,16 @@ export function pickColorForContext(context: string): chrome.tabGroups.ColorEnum
  * of "block by exclusion" - where user picks ALLOWED contexts and everything else is blocked.
  */
 
-import { getFocusState, setFocusState } from "../api/storageApi";
+import { getFocusState, setFocusState, getStorage, setStorage } from "../api/storageApi";
 import { FocusState } from "../types/index";
+import { openSidePanel, closeSidePanel } from "../lib/panels/sidePanelManager";
+import { launchFocusWindow, closeFocusWindow } from "../lib/windows/focusWindow";
+import { releaseParkedLinks } from "../api/parkedLinksApi";
+import { ungroupAllTabs } from "../api/tabsApi";
 
 // State for tracking if a navigation was blocked recently (for badge alert)
 let recentlyBlocked = false;
 let blockClearTimer: NodeJS.Timeout | undefined;
-let endTimeCheckInterval: NodeJS.Timeout | undefined;
 
 /**
  * Start a focus session
@@ -1292,55 +1046,94 @@ export async function start(allowed: string[], durationMin?: number): Promise<vo
     endTime
   });
   
+  // Store blockedCategories for backward compatibility
+  const knownContexts = [
+    "Work", "Development", "Research", "Learning", 
+    "Entertainment", "Social", "Shopping", "News"
+  ];
+  const blockedCategories = knownContexts.filter(ctx => !safeAllowed.includes(ctx));
+  await setStorage({ blockedCategories });
+  
+  // Open the side panel for persistent timer display
+  await openSidePanel();
+  
+  // Check if focus window is enabled and launch if needed
+  const storage = await getStorage(["focusSettings"]);
+  const focusWindowEnabled = storage.focusSettings?.focusWindowEnabled || false;
+  if (focusWindowEnabled) {
+    await launchFocusWindow();
+  }
+  
   // Set badge to show focus is active
   chrome.action.setBadgeText({ text: "•" });
   chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue
   
-  // Setup interval to check for timer expiration
-  if (endTime) {
-    if (endTimeCheckInterval) {
-      clearInterval(endTimeCheckInterval);
-    }
-    
-    endTimeCheckInterval = setInterval(async () => {
-      const focusState = await getFocusState();
-      
-      if (focusState.active && focusState.endTime && focusState.endTime <= Date.now()) {
-        // Timer expired, end focus session
-        console.log("Focus timer expired automatically");
-        end();
-        
-        // Show a notification
-        chrome.notifications.create({
-          type: 'basic',
-          iconUrl: chrome.runtime.getURL('icons/icon48.png'),
-          title: 'Focus Session Ended',
-          message: 'Your focus session has ended. Great job!',
-          priority: 2
-        });
-      }
-    }, 15000); // Check every 15 seconds
-  }
+  // Show notification
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+    title: 'Focus Session Started',
+    message: durationMin ? 
+      `Focus session started for ${durationMin} minutes. Stay focused!` :
+      'Focus session started. Stay focused!',
+    priority: 2
+  });
 }
 
 /**
  * End a focus session
+ * @param saveWorkspaceName - Optional workspace name to save current tab groups
  */
-export async function end(): Promise<void> {
+export async function end(saveWorkspaceName?: string): Promise<void> {
+  // If user wants to save workspace, store it
+  if (saveWorkspaceName) {
+    try {
+      // Get all tab groups
+      const groups = await chrome.tabGroups.query({});
+      // For each group, gather tab URLs
+      const workspaceGroups = await Promise.all(
+        groups.map(async (grp) => {
+          const tabs = await chrome.tabs.query({ groupId: grp.id });
+          return {
+            groupId: grp.id,
+            title: grp.title || "",
+            color: grp.color,
+            tabUrls: tabs.map(t => t.url || "")
+          };
+        })
+      );
+
+      // Store in savedWorkspaces
+      const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
+      const newWorkspaceEntry = {
+        name: saveWorkspaceName,
+        tabGroups: workspaceGroups,
+        timestamp: Date.now()
+      };
+
+      const updatedWorkspaces = Array.isArray(savedWorkspaces) 
+        ? [...savedWorkspaces, newWorkspaceEntry]
+        : [newWorkspaceEntry];
+
+      await setStorage({ savedWorkspaces: updatedWorkspaces });
+    } catch (error) {
+      console.error("Error saving workspace:", error);
+    }
+  }
+  
   // Clear focus state
   await setFocusState({
     active: false,
     endTime: undefined
   });
   
+  // Close UI components
+  await closeSidePanel();
+  await closeFocusWindow();
+  await ungroupAllTabs();
+  
   // Clear badge
   chrome.action.setBadgeText({ text: "" });
-  
-  // Clear timer interval
-  if (endTimeCheckInterval) {
-    clearInterval(endTimeCheckInterval);
-    endTimeCheckInterval = undefined;
-  }
   
   // Reset block indicator
   recentlyBlocked = false;
@@ -1348,6 +1141,18 @@ export async function end(): Promise<void> {
     clearTimeout(blockClearTimer);
     blockClearTimer = undefined;
   }
+  
+  // Show notification
+  chrome.notifications.create({
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon48.png'),
+    title: 'Focus Session Ended',
+    message: 'Your focus session has ended. Great job!',
+    priority: 2
+  });
+  
+  // Release any links that were parked during the session
+  await releaseParkedLinks();
 }
 
 /**
@@ -1414,19 +1219,91 @@ export async function isActive(): Promise<boolean> {
 }
 
 /**
- * Get the time left in the current focus session in minutes
+ * Get the time left in the current focus session in seconds
  * 
- * @returns Minutes left in the focus session, or 0 if no session or no timer
+ * @returns Seconds left in the focus session, or -1 if no timer (unlimited session)
  */
 export async function getTimeLeft(): Promise<number> {
-  const focusState = await getFocusState();
-  
-  if (!focusState.active || !focusState.endTime) {
-    return 0;
+  const { active, endTime } = await getFocusState();
+  if (!active) return 0; // Not active, no time
+  if (!endTime) return -1; // -1 = unlimited/indefinite session
+  return Math.max(0, endTime - Date.now()) / 1000; // seconds
+}
+
+/**
+ * Restore a saved workspace by name. 
+ * Re-open tabs and re-create groups (approximation).
+ */
+export async function restoreWorkspace(name: string): Promise<void> {
+  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
+  if (!savedWorkspaces) return;
+
+  const workspace = savedWorkspaces.find(ws => ws.name === name);
+  if (!workspace) return;
+
+  // For each group, re-create tabs
+  for (const grp of workspace.tabGroups) {
+    // Open each tab
+    const tabIds = [];
+    for (const url of grp.tabUrls) {
+      const createdTab = await chrome.tabs.create({ url, active: false });
+      tabIds.push(createdTab.id as number);
+    }
+    // Create or update tab group
+    if (tabIds.length > 0) {
+      const newGroupId = await chrome.tabs.group({ tabIds });
+      await chrome.tabGroups.update(newGroupId, {
+        title: grp.title || "",
+        color: grp.color
+      });
+    }
   }
-  
-  const timeLeftMs = Math.max(0, focusState.endTime - Date.now());
-  return Math.floor(timeLeftMs / 60000); // Convert to minutes
+}
+
+/**
+ * Save current window's tab groups (workspace).
+ * This can be called at the end of a Focus Session or on demand.
+ */
+export async function saveCurrentWorkspace(name: string): Promise<void> {
+  // Get all tab groups
+  const groups = await chrome.tabGroups.query({});
+  // For each group, gather tab URLs
+  const workspaceGroups = await Promise.all(
+    groups.map(async (grp) => {
+      const tabs = await chrome.tabs.query({ groupId: grp.id });
+      return {
+        groupId: grp.id,
+        title: grp.title || "",
+        color: grp.color,
+        tabUrls: tabs.map(t => t.url || "")
+      };
+    })
+  );
+
+  // Store in savedWorkspaces
+  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
+  const newWorkspaceEntry = {
+    name,
+    tabGroups: workspaceGroups,
+    timestamp: Date.now()
+  };
+
+  const updatedWorkspaces = Array.isArray(savedWorkspaces) 
+    ? [...savedWorkspaces, newWorkspaceEntry]
+    : [newWorkspaceEntry];
+
+  await setStorage({ savedWorkspaces: updatedWorkspaces });
+}
+
+/**
+ * Clean up old workspace entries if needed, or remove a workspace by name, etc.
+ */
+export async function removeWorkspace(name: string): Promise<void> {
+  const { savedWorkspaces } = await getStorage(["savedWorkspaces"]);
+  if (!savedWorkspaces) return;
+
+  const updatedWorkspaces = savedWorkspaces.filter(ws => ws.name !== name);
+  await setStorage({ savedWorkspaces: updatedWorkspaces });
 } 
 
 # ./src/lib/contextEngine/textAnalyzer.ts
@@ -1484,16 +1361,38 @@ const DEFAULT_CONTEXT_KEYWORDS: Record<string, Record<string, number>> = {
   }
 };
 
+// Cache for context keywords to avoid storage hits
+let keywordsCache: Record<string, Record<string, number>> | null = null;
+
+// Setup storage change listener to invalidate cache
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.contextKeywords) {
+    // Clear the cache when keywords are updated
+    keywordsCache = null;
+  }
+});
+
 /**
- * Load context keywords from storage or use defaults
+ * Get context keywords with caching
  */
 export async function getContextKeywords(): Promise<Record<string, Record<string, number>>> {
+  // Return from cache if available
+  if (keywordsCache !== null) {
+    // Return a deep clone to prevent mutation
+    return structuredClone(keywordsCache);
+  }
+  
   try {
     const { contextKeywords } = await chrome.storage.local.get("contextKeywords") as Pick<StorageData, "contextKeywords">;
-    return contextKeywords || DEFAULT_CONTEXT_KEYWORDS;
+    // Store in cache
+    keywordsCache = contextKeywords || DEFAULT_CONTEXT_KEYWORDS;
+    // Return a deep clone to prevent mutation
+    return structuredClone(keywordsCache);
   } catch (error) {
     console.error("Error loading context keywords:", error);
-    return DEFAULT_CONTEXT_KEYWORDS;
+    keywordsCache = DEFAULT_CONTEXT_KEYWORDS;
+    // Return a deep clone to prevent mutation
+    return structuredClone(keywordsCache);
   }
 }
 
@@ -1555,8 +1454,8 @@ function calculateTFIDF(text: string, keywords: Record<string, Record<string, nu
         // TF: term frequency normalized by total words
         const tf = termFreq[keyword] / totalWords;
         
-        // IDF: inverse document frequency (simplified)
-        const idf = Math.log(1 / (1 + Math.exp(-tf)));
+        // IDF: a constant value for weight normalization
+        const idf = 1.5;
         
         categoryScore += tf * idf * weight;
         matchedTerms++;
@@ -2590,14 +2489,11 @@ function setupEventListeners() {
     // Get duration (if any)
     const duration = durationInput.value ? parseInt(durationInput.value, 10) : undefined;
     
-    // Calculate blocked categories
-    const blockedCategories = AVAILABLE_CONTEXTS.filter(c => !allowedContexts.includes(c));
-    
-    // Start focus session with correct format
+    // Start focus session with allowed contexts directly
     chrome.runtime.sendMessage({
       type: 'START_FOCUS_SESSION',
       payload: {
-        blockedCategories: blockedCategories,
+        allowedContexts: allowedContexts,
         durationMinutes: duration
       }
     }, () => {
@@ -2803,6 +2699,11 @@ document.addEventListener('DOMContentLoaded', initPopup);
       </label>
       
       <label>
+        <input type="checkbox" id="autoGroupCheckbox" />
+        Automatically group tabs by context
+      </label>
+      
+      <label>
         Context switch threshold:
         <input type="number" id="switchThresholdInput" min="2" max="20" />
         <span>(Number of context switches that trigger a focus alert)</span>
@@ -2917,6 +2818,7 @@ import { getParkedLinks, releaseParkedLinks, clearParkedLinks } from "../api/par
 // DOM Elements
 const extensionEnabledCheckbox = document.getElementById("extensionEnabledCheckbox") as HTMLInputElement;
 const notificationsCheckbox = document.getElementById("notificationsCheckbox") as HTMLInputElement;
+const autoGroupCheckbox = document.getElementById("autoGroupCheckbox") as HTMLInputElement;
 const switchThresholdInput = document.getElementById("switchThresholdInput") as HTMLInputElement;
 const timeWindowInput = document.getElementById("timeWindowInput") as HTMLInputElement;
 const saveBtn = document.getElementById("saveBtn") as HTMLButtonElement;
@@ -2945,6 +2847,7 @@ document.addEventListener("DOMContentLoaded", initializeOptions);
 async function initializeOptions() {
   const storage = await getStorage([
     "extensionEnabled", 
+    "autoGroupEnabled",
     "focusSettings",
     "subUrlOverrides",
     "parkedLinks"
@@ -2952,6 +2855,9 @@ async function initializeOptions() {
   
   // Extension enabled/disabled
   extensionEnabledCheckbox.checked = storage.extensionEnabled ?? true;
+  
+  // Auto-grouping enabled/disabled
+  autoGroupCheckbox.checked = storage.autoGroupEnabled ?? false;
   
   // Focus Settings
   const focusSettings = storage.focusSettings || DEFAULT_FOCUS_SETTINGS;
@@ -3011,6 +2917,7 @@ async function saveOptions() {
   // Update storage with new settings
   await setStorage({
     extensionEnabled: extensionEnabledCheckbox.checked,
+    autoGroupEnabled: autoGroupCheckbox.checked,
     focusSettings,
     subUrlOverrides
   });
@@ -3041,6 +2948,7 @@ function showNotification(message: string, duration = 2000) {
 async function resetOptions() {
   // Reset UI to defaults
   extensionEnabledCheckbox.checked = true;
+  autoGroupCheckbox.checked = false;
   const defaultSettings = getDefaultFocusSettings();
   notificationsCheckbox.checked = defaultSettings.notificationsEnabled;
   switchThresholdInput.value = defaultSettings.switchThreshold.toString();
@@ -3052,6 +2960,7 @@ async function resetOptions() {
   // Save defaults
   await setStorage({
     extensionEnabled: true,
+    autoGroupEnabled: false,
     focusSettings: defaultSettings,
     subUrlOverrides: {}
   });
@@ -3295,11 +3204,11 @@ async function handleClearParkedLinks() {
 import { groupTabByContext, onTabRemoved, ungroupAllTabs } from "../api/tabsApi";
 import { getStorage, setStorage, getFocusState, setFocusState } from "../api/storageApi";
 import { checkFocusStatus, showFocusNotification } from "../api/focusApi";
-import { restoreWorkspace } from "../api/focusSessionManager";
 import { classifyPageContext } from "../lib/contextEngine";
 import { extractDomain } from "../lib/contextEngine/urlAnalyzer";
 import { saveForLater, releaseParkedLinks, goBackOrClose } from "../api/parkedLinksApi";
 import * as focusEngine from "../lib/focusEngine";
+import { applyAllowedContexts } from "./blockingRules";
 
 const tabContextMap: Record<number, string> = {};
 const BLOCKED_PAGE_URL = chrome.runtime.getURL("blocked.html");
@@ -3323,11 +3232,11 @@ async function initExtension(): Promise<void> {
       await setFocusState({ active: false, endTime: undefined });
     } else {
       console.log(`[Background] Focus session continues until ${new Date(focusState.endTime).toLocaleTimeString()}`);
+      
+      // Apply blocking rules for active focus session
+      await applyAllowedContexts();
     }
   }
-  
-  // Setup URL blocking for Focus Session - always setup the handler
-  setupFocusSessionUrlBlocking();
   
   // Set up periodic checks
   setupPeriodicChecks();
@@ -3337,26 +3246,31 @@ async function initExtension(): Promise<void> {
  * Set up all periodic checks needed for the extension
  */
 function setupPeriodicChecks() {
-  // Periodic check for session end
-  setInterval(checkFocusSessionStatus, 30000); // check every 30s
+  // Set up alarms for periodic checks - minimum 1 minute for MV3
+  chrome.alarms.create('focusTick', { periodInMinutes: 1 });     // 60s - check session status
+  chrome.alarms.create('focusDrift', { periodInMinutes: 2 });    // 120s - check drift (less urgent)
   
-  // More frequent check for focus loss during active sessions
-  setInterval(async () => {
+  // Handle alarms
+  chrome.alarms.onAlarm.addListener(async ({ name }) => {
     try {
-      const isSessionActive = await focusEngine.isActive();
-      if (isSessionActive) {
-        const focusStatus = await checkFocusStatus();
-        if (focusStatus.isLostFocus) {
-          // Immediately send a drift warning if focus is lost
-          await sendDriftWarning(focusStatus);
+      if (name === 'focusTick') {
+        await checkFocusSessionStatus();
+      } else if (name === 'focusDrift') {
+        const isSessionActive = await focusEngine.isActive();
+        if (isSessionActive) {
+          const focusStatus = await checkFocusStatus();
+          if (focusStatus.isLostFocus) {
+            // Immediately send a drift warning if focus is lost
+            await sendDriftWarning(focusStatus);
+          }
         }
-        // Update badge regardless
-        updateBadge();
       }
+      // Update badge for all alarm types
+      await updateBadge();
     } catch (err) {
-      console.error("Error in focus check interval:", err);
+      console.error(`Error in alarm handler (${name}):`, err);
     }
-  }, 10000); // Check every 10 seconds during active sessions
+  });
 }
 
 /**
@@ -3401,26 +3315,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return false; // No response needed
   }
   else if (request.type === "START_FOCUS_SESSION") {
-    const { durationMinutes, blockedCategories } = request.payload || {};
+    const { durationMinutes, allowedContexts } = request.payload || {};
     
-    const KNOWN_CONTEXTS = [
-      "Work", "Development", "Research", "Learning",
-      "Entertainment", "Social", "Shopping", "News"
-    ];
-    const allowedContexts = KNOWN_CONTEXTS.filter(
-      ctx => !blockedCategories?.includes(ctx)
-    );
-    
-    focusEngine.start(allowedContexts, durationMinutes)
-      .then(() => sendResponse({ success: true }))
-      .catch((err) => {
-        console.error(err);
-        sendResponse({ success: false, error: err.message });
-      });
+    // Use allowedContexts directly if provided, otherwise fallback to blockedCategories
+    if (allowedContexts) {
+      focusEngine.start(allowedContexts, durationMinutes)
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => {
+          console.error(err);
+          sendResponse({ success: false, error: err.message });
+        });
+    } else {
+      // Legacy support: convert blockedCategories to allowedContexts
+      const { blockedCategories } = request.payload || {};
+      const KNOWN_CONTEXTS = [
+        "Work", "Development", "Research", "Learning",
+        "Entertainment", "Social", "Shopping", "News"
+      ];
+      const allowedContexts = KNOWN_CONTEXTS.filter(
+        ctx => !blockedCategories?.includes(ctx)
+      );
+      
+      focusEngine.start(allowedContexts, durationMinutes)
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => {
+          console.error(err);
+          sendResponse({ success: false, error: err.message });
+        });
+    }
     return true; // Indicates async response
   }
   else if (request.type === "END_FOCUS_SESSION") {
-    focusEngine.end()
+    const { saveWorkspaceName } = request.payload || {};
+    focusEngine.end(saveWorkspaceName)
       .then(() => sendResponse({ success: true }))
       .catch((err) => {
         console.error("Error ending focus session:", err);
@@ -3429,11 +3356,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Required for async response
   }
   else if (request.type === "GET_FOCUS_TIME_LEFT") {
-    getFocusState()
-      .then(focusState => {
-        const seconds = focusState.endTime
-          ? Math.max(0, (focusState.endTime - Date.now()) / 1000)
-          : 0;
+    focusEngine.getTimeLeft()
+      .then(seconds => {
         sendResponse({ seconds });
       })
       .catch(error => {
@@ -3451,7 +3375,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   else if (request.type === "RESTORE_WORKSPACE") {
     const { name } = request.payload || {};
-    restoreWorkspace(name)
+    focusEngine.restoreWorkspace(name)
       .then(() => sendResponse({ success: true }))
       .catch((err) => {
         console.error(err);
@@ -3612,17 +3536,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 /**
- * Toggle focus mode on/off
+ * Handle any focus mode toggle (enable/disable)
  */
 async function toggleFocusMode(enabled: boolean): Promise<void> {
+  // This is a legacy function, but we'll keep it for compatibility with older UIs
   if (enabled) {
-    // Just update badge in the new approach
-    updateBadge();
+    // Legacy function, start with default settings
+    await focusEngine.start(["Work", "Development", "Research", "Learning"]);
+    
+    // Apply DNR blocking rules
+    await applyAllowedContexts();
   } else {
-    // Ungroup all tabs when focus mode is disabled
-    await ungroupAllTabs();
-    // Clear badge when focus mode is disabled
-    chrome.action.setBadgeText({ text: "" });
+    // Turn off focus mode
+    await focusEngine.end();
+    
+    // Remove all blocking rules
+    await applyAllowedContexts();
   }
 }
 
@@ -3652,49 +3581,21 @@ async function handleContextUpdate(
 }
 
 /**
- * Updates the badge with current context switch count
+ * Updates the badge with current focus status
  */
 async function updateBadge(): Promise<void> {
   try {
-    // Update to use the new focusState instead of focusModeEnabled
     const focusState = await getFocusState();
     
-    // If focus mode is not active, don't show badge
+    // If not in focus mode, clear badge
     if (!focusState.active) {
       chrome.action.setBadgeText({ text: "" });
       return;
     }
     
-    // Check if we're showing focus time or context switches
-    const focusTimeLeft = await focusEngine.getTimeLeft();
-    
-    if (focusTimeLeft > 0) {
-      // Convert seconds to minutes for badge
-      const minutesLeft = Math.ceil(focusTimeLeft / 60);
-      chrome.action.setBadgeText({ text: minutesLeft.toString() });
-      
-      // Get focus status to determine color
-      const focusStatus = await checkFocusStatus();
-      if (focusStatus.isLostFocus) {
-        chrome.action.setBadgeBackgroundColor({ color: "#d32f2f" }); // Red for lost focus
-      } else {
-        chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue for focused
-      }
-    } else {
-      // Show context switch count if no timer active
-      const focusStatus = await checkFocusStatus();
-      const switchCount = focusStatus.contextSwitches.length;
-      
-      // Set badge with context switch count
-      chrome.action.setBadgeText({ text: switchCount.toString() });
-      
-      // Change color if focus is lost
-      if (focusStatus.isLostFocus) {
-        chrome.action.setBadgeBackgroundColor({ color: "#d32f2f" }); // Red for lost focus
-      } else {
-        chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue for focused
-      }
-    }
+    // Show a simple indicator
+    chrome.action.setBadgeText({ text: "•" });
+    chrome.action.setBadgeBackgroundColor({ color: "#1565c0" }); // Blue
   } catch (error) {
     console.error("Error updating badge:", error);
   }
@@ -3768,65 +3669,19 @@ async function sendDriftWarning(focusStatus: any): Promise<void> {
 }
 
 /**
- * Sets up URL blocking based on focus session
+ * Sets up blocking when a focus session is active
+ * This is a no-op now because we use DNR rules for blocking
  */
 function setupFocusSessionUrlBlocking(): void {
-  // Listen for tab updates (URL changes)
-  chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-    // Only check for URL changes
-    if (changeInfo.url && tab.url) {
-      try {
-        // Check if this URL should be blocked
-        const shouldBlock = await checkIfUrlShouldBeBlocked(tab.url);
-        if (shouldBlock) {
-          console.log(`[Focus] Blocking URL: ${tab.url}`);
-          
-          // Use standard BLOCKED_PAGE_URL for consistency with drift warnings
-          chrome.tabs.update(tabId, { url: BLOCKED_PAGE_URL });
-        }
-      } catch (error) {
-        console.error("Error checking URL:", error);
-      }
-    }
-  });
+  // No action needed - DNR rules handle blocking
 }
 
 /**
- * Check if URL should be blocked according to focus state and context
- */
-async function checkIfUrlShouldBeBlocked(url: string): Promise<boolean> {
-  // Get the focus state
-  const focusState = await getFocusState();
-  
-  // If focus is not active, nothing is blocked
-  if (!focusState.active) {
-    return false;
-  }
-  
-  try {
-    // Classify the URL's context
-    const contextData = await getContextData(url);
-    const context = contextData?.context;
-    
-    if (!context) {
-      // If we can't determine the context, don't block
-      return false;
-    }
-    
-    // Use focusEngine to check if this context is blocked
-    return focusEngine.isBlocked(context);
-  } catch (error) {
-    console.error("Error classifying URL:", error);
-    return false;
-  }
-}
-
-/**
- * Periodically check if a focus session should be ended
+ * Check if a focus session should be ended
  */
 async function checkFocusSessionStatus(): Promise<void> {
-  const timeLeft = await focusEngine.getTimeLeft();
-  if (timeLeft <= 0) {
+  const endTime = (await getFocusState()).endTime;
+  if (endTime && Date.now() >= endTime) {
     const active = await focusEngine.isActive();
     if (active) {
       // Focus session time is up
@@ -3887,36 +3742,11 @@ async function updateContextWeights(url: string): Promise<void> {
   await saveContextData(url, contextData);
 }
 
-// Modify the tabs.onUpdated handler to remove timer-related code
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // Check if the tab has completed loading
-  if (changeInfo.status === 'complete' && tab.url && !tab.url.startsWith('chrome://')) {
-    // Start a short delay to allow any content scripts to initialize
-    setTimeout(() => {
-      // Remove timer-related code
-      // if (activeTimer && activeTimer.active && activeTimer.endTime > Date.now()) {
-      //   // Target just this specific tab
-      //   chrome.scripting.executeScript({
-      //     target: { tabId },
-      //     func: () => {
-      //       // Force content script to re-check for timer
-      //       chrome.runtime.sendMessage({ type: "CONTENT_SCRIPT_READY" });
-      //     }
-      //   }).catch(err => {
-      //     // Ignore errors for restricted pages
-      //   });
-      //   
-      //   // Send the timer state to the newly loaded tab
-      //   chrome.tabs.sendMessage(tabId, {
-      //     type: 'RESTORE_FOCUS_TIMER',
-      //     timerState: activeTimer
-      //   }).catch(err => {
-      //     console.log('Tab not ready yet, will use script injection instead');
-      //     // Use script injection as fallback
-      //     ensureTimerVisibility();
-      //   });
-      // }
-    }, 500);
+// Add listeners for focus state changes to update DNR rules
+chrome.storage.onChanged.addListener(async (changes) => {
+  if (changes.focusState) {
+    // Focus state has changed, update DNR rules
+    await applyAllowedContexts();
   }
 });
 
@@ -3990,6 +3820,121 @@ chrome.runtime.onInstalled.addListener(details => {
 // Kick off on load
 initExtension().catch(console.error);
 
+# ./src/background/blockingRules.ts
+################################################################################
+/**
+ * Declarative Net Request rules for efficient content blocking
+ */
+import { getFocusState } from "../api/storageApi";
+
+// Constants
+const RULE_ID_OFFSET = 100;
+const MAX_DNR_RULES = 5000;
+const BLOCKED_PAGE_URL = chrome.runtime.getURL("blocked.html");
+
+/**
+ * Apply allowed contexts as declarative blocking rules
+ * 
+ * This function takes the current allowed contexts and creates dynamic DNR rules
+ * to block all requests to domains that are categorized outside those contexts.
+ */
+export async function applyAllowedContexts(): Promise<void> {
+  try {
+    // Get the current focus state
+    const focusState = await getFocusState();
+    
+    // If focus is not active, remove all rules
+    if (!focusState.active) {
+      await chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: await getCurrentRuleIds()
+      });
+      return;
+    }
+    
+    // Get domains classified by context
+    const { domainContextMap } = await chrome.storage.local.get('domainContextMap') as { 
+      domainContextMap: Record<string, string> 
+    };
+    
+    if (!domainContextMap) {
+      console.warn("No domain context map found, cannot create blocking rules");
+      return;
+    }
+    
+    // Group domains by context
+    const domainsByContext: Record<string, string[]> = {};
+    for (const [domain, context] of Object.entries(domainContextMap)) {
+      if (!domainsByContext[context]) {
+        domainsByContext[context] = [];
+      }
+      domainsByContext[context].push(domain);
+    }
+    
+    // Create rules for each blocked context
+    const rules: chrome.declarativeNetRequest.Rule[] = [];
+    const blockedContexts = getAllKnownContexts().filter(
+      ctx => !focusState.allowedContexts.includes(ctx)
+    );
+    
+    let ruleId = RULE_ID_OFFSET;
+    
+    for (const context of blockedContexts) {
+      const domains = domainsByContext[context] || [];
+      
+      // Skip if no domains in this context
+      if (domains.length === 0) continue;
+      
+      // Add a rule for this context
+      rules.push({
+        id: ruleId++,
+        priority: 1,
+        action: {
+          type: chrome.declarativeNetRequest.RuleActionType.REDIRECT,
+          redirect: { url: BLOCKED_PAGE_URL }
+        },
+        condition: {
+          urlFilter: domains.join('|'),
+          resourceTypes: [chrome.declarativeNetRequest.ResourceType.MAIN_FRAME]
+        }
+      });
+      
+      // DNR has a rule limit, so break if we hit it
+      if (rules.length >= MAX_DNR_RULES) {
+        console.warn(`Hit DNR rule limit of ${MAX_DNR_RULES}`);
+        break;
+      }
+    }
+    
+    // Apply the rules
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: await getCurrentRuleIds(),
+      addRules: rules
+    });
+    
+    console.log(`[DNR] Applied ${rules.length} blocking rules for ${blockedContexts.length} contexts`);
+  } catch (error) {
+    console.error("Error applying DNR rules:", error);
+  }
+}
+
+/**
+ * Get current active rule IDs
+ */
+async function getCurrentRuleIds(): Promise<number[]> {
+  const rules = await chrome.declarativeNetRequest.getDynamicRules();
+  return rules.map(rule => rule.id);
+}
+
+/**
+ * Get all known context categories
+ */
+function getAllKnownContexts(): string[] {
+  return [
+    "Work", "Development", "Research", "Learning", 
+    "Entertainment", "Social", "Shopping", "News"
+  ];
+} 
+
 # ./src/content/index.ts
 ################################################################################
 /**
@@ -4020,9 +3965,16 @@ async function initContextDetection(): Promise<void> {
 function setupMutationObserver(): void {
   // Observe changes to the page content
   const observer = new MutationObserver(() => {
-    // Avoid excessive classifications by debouncing
+    // Skip if document is hidden (tab not visible)
+    if (document.hidden) return;
+    
+    // Use requestIdleCallback for better performance
     if (!contextDetectionTimer) {
-      scheduleContextCheck();
+      if ('requestIdleCallback' in window) {
+        window.requestIdleCallback(() => scheduleContextCheck(), { timeout: 2000 });
+      } else {
+        scheduleContextCheck();
+      }
     }
   });
   
@@ -4486,214 +4438,4 @@ export function initParkedLinksUI(containerId: string): void {
     createParkedLinksUI(container);
   }, 30000); // refresh every 30 seconds
 } 
-
-# ./src/sidepanel/sidepanel-timer.html
-################################################################################
-<!DOCTYPE html>
-<html>
-<head>
-  <title>Focus Timer</title>
-  <style>
-    body {
-      font-family: system-ui, sans-serif;
-      margin: 0;
-      padding: 20px;
-      background: #f9f9f9;
-      height: 100vh;
-      box-sizing: border-box;
-    }
-    
-    .timer-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 20px;
-      background: white;
-      border-radius: 8px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    
-    .timer-display {
-      font-size: 32px;
-      font-weight: bold;
-      margin: 20px 0;
-    }
-    
-    .context-info {
-      margin-bottom: 20px;
-      text-align: center;
-    }
-    
-    .end-button {
-      background: #f44336;
-      color: white;
-      border: none;
-      padding: 10px 20px;
-      border-radius: 4px;
-      font-weight: bold;
-      cursor: pointer;
-    }
-    
-    .warning {
-      color: #f44336;
-      font-weight: bold;
-      margin-top: 16px;
-      text-align: center;
-    }
-    
-    .pulsing {
-      animation: pulse 1s alternate infinite;
-    }
-    
-    @keyframes pulse {
-      0% { opacity: 0.7; }
-      100% { opacity: 1; }
-    }
-  </style>
-</head>
-<body>
-  <div class="timer-container">
-    <h2>Focus Timer</h2>
-    
-    <div class="context-info">
-      <strong>Current context:</strong>
-      <div id="context-name">Loading...</div>
-    </div>
-    
-    <div class="timer-display" id="time-remaining">00:00</div>
-    
-    <button class="end-button" id="end-timer">End Timer & Return to Focus</button>
-    
-    <div class="warning" id="warning-message" style="display: none;">
-      Time's almost up! Finish what you're doing and return to focus.
-    </div>
-  </div>
-
-  <script src="sidepanel-timer.js"></script>
-</body>
-</html> 
-
-# ./src/sidepanel/sidepanel-timer.js
-################################################################################
-// Get DOM elements
-const timeRemainingElement = document.getElementById('time-remaining');
-const contextNameElement = document.getElementById('context-name');
-const endTimerButton = document.getElementById('end-timer');
-const warningMessage = document.getElementById('warning-message');
-
-// Timer variables
-let timerInterval;
-let endTime = 0;
-let fromContext = '';
-let toContext = '';
-
-// Initialize the timer
-function initializeTimer() {
-  // Get timer data from storage
-  chrome.storage.local.get(['activeGlobalTimer'], (result) => {
-    if (result.activeGlobalTimer && result.activeGlobalTimer.active) {
-      const { endTime: storedEndTime, fromContext: from, toContext: to } = result.activeGlobalTimer;
-      
-      // Set timer data
-      endTime = storedEndTime;
-      fromContext = from;
-      toContext = to;
-      
-      // Update UI
-      contextNameElement.textContent = `Switched from "${fromContext}" to "${toContext}"`;
-      
-      // Start timer
-      startTimerDisplay();
-    } else {
-      // No active timer
-      timeRemainingElement.textContent = 'No active timer';
-      contextNameElement.textContent = 'N/A';
-      warningMessage.style.display = 'none';
-    }
-  });
-}
-
-// Start timer display
-function startTimerDisplay() {
-  // Clear any existing interval
-  if (timerInterval) {
-    clearInterval(timerInterval);
-  }
-  
-  // Update immediately
-  updateTimerDisplay();
-  
-  // Update every second
-  timerInterval = setInterval(() => {
-    updateTimerDisplay();
-  }, 1000);
-}
-
-// Update timer display
-function updateTimerDisplay() {
-  const now = Date.now();
-  const timeLeft = Math.max(0, endTime - now);
-  
-  if (timeLeft <= 0) {
-    // Timer expired
-    timeRemainingElement.textContent = 'Expired';
-    clearInterval(timerInterval);
-    
-    // Show warning
-    warningMessage.textContent = 'Timer has expired. Return to your focus now!';
-    warningMessage.style.display = 'block';
-    warningMessage.classList.add('pulsing');
-    
-    // Notify background
-    chrome.runtime.sendMessage({ type: 'TIMER_EXPIRED' });
-    return;
-  }
-  
-  // Format time remaining
-  const minutes = Math.floor(timeLeft / 60000);
-  const seconds = Math.floor((timeLeft % 60000) / 1000);
-  timeRemainingElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  
-  // Add visual indication when time is running low
-  if (timeLeft < 60000) {
-    timeRemainingElement.style.color = '#f44336';
-    timeRemainingElement.classList.add('pulsing');
-    
-    // Show warning message
-    warningMessage.style.display = 'block';
-  } else {
-    timeRemainingElement.style.color = '';
-    timeRemainingElement.classList.remove('pulsing');
-    warningMessage.style.display = 'none';
-  }
-}
-
-// End timer handler
-endTimerButton.addEventListener('click', () => {
-  chrome.runtime.sendMessage({ type: 'END_FOCUS_TIMER' });
-  timeRemainingElement.textContent = 'Timer ended';
-  clearInterval(timerInterval);
-  warningMessage.style.display = 'none';
-  
-  // Update UI to show timer ended
-  contextNameElement.textContent = 'Timer ended - returned to focus';
-});
-
-// Listen for timer updates from background script
-chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === 'TIMER_UPDATED') {
-    initializeTimer();
-  } else if (message.type === 'TIMER_ENDED') {
-    timeRemainingElement.textContent = 'Timer ended';
-    contextNameElement.textContent = 'N/A';
-    warningMessage.style.display = 'none';
-    clearInterval(timerInterval);
-  }
-});
-
-// Initialize on load
-document.addEventListener('DOMContentLoaded', initializeTimer);
-
-// Poll for timer updates (backup mechanism)
-setInterval(initializeTimer, 5000); 
 

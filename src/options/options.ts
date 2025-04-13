@@ -5,6 +5,7 @@ import { getParkedLinks, releaseParkedLinks, clearParkedLinks } from "../api/par
 // DOM Elements
 const extensionEnabledCheckbox = document.getElementById("extensionEnabledCheckbox") as HTMLInputElement;
 const notificationsCheckbox = document.getElementById("notificationsCheckbox") as HTMLInputElement;
+const autoGroupCheckbox = document.getElementById("autoGroupCheckbox") as HTMLInputElement;
 const switchThresholdInput = document.getElementById("switchThresholdInput") as HTMLInputElement;
 const timeWindowInput = document.getElementById("timeWindowInput") as HTMLInputElement;
 const saveBtn = document.getElementById("saveBtn") as HTMLButtonElement;
@@ -33,6 +34,7 @@ document.addEventListener("DOMContentLoaded", initializeOptions);
 async function initializeOptions() {
   const storage = await getStorage([
     "extensionEnabled", 
+    "autoGroupEnabled",
     "focusSettings",
     "subUrlOverrides",
     "parkedLinks"
@@ -40,6 +42,9 @@ async function initializeOptions() {
   
   // Extension enabled/disabled
   extensionEnabledCheckbox.checked = storage.extensionEnabled ?? true;
+  
+  // Auto-grouping enabled/disabled
+  autoGroupCheckbox.checked = storage.autoGroupEnabled ?? false;
   
   // Focus Settings
   const focusSettings = storage.focusSettings || DEFAULT_FOCUS_SETTINGS;
@@ -99,6 +104,7 @@ async function saveOptions() {
   // Update storage with new settings
   await setStorage({
     extensionEnabled: extensionEnabledCheckbox.checked,
+    autoGroupEnabled: autoGroupCheckbox.checked,
     focusSettings,
     subUrlOverrides
   });
@@ -129,6 +135,7 @@ function showNotification(message: string, duration = 2000) {
 async function resetOptions() {
   // Reset UI to defaults
   extensionEnabledCheckbox.checked = true;
+  autoGroupCheckbox.checked = false;
   const defaultSettings = getDefaultFocusSettings();
   notificationsCheckbox.checked = defaultSettings.notificationsEnabled;
   switchThresholdInput.value = defaultSettings.switchThreshold.toString();
@@ -140,6 +147,7 @@ async function resetOptions() {
   // Save defaults
   await setStorage({
     extensionEnabled: true,
+    autoGroupEnabled: false,
     focusSettings: defaultSettings,
     subUrlOverrides: {}
   });

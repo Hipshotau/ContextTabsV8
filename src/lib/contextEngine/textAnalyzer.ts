@@ -68,18 +68,21 @@ chrome.storage.onChanged.addListener((changes) => {
 export async function getContextKeywords(): Promise<Record<string, Record<string, number>>> {
   // Return from cache if available
   if (keywordsCache !== null) {
-    return keywordsCache;
+    // Return a deep clone to prevent mutation
+    return structuredClone(keywordsCache);
   }
   
   try {
     const { contextKeywords } = await chrome.storage.local.get("contextKeywords") as Pick<StorageData, "contextKeywords">;
     // Store in cache
     keywordsCache = contextKeywords || DEFAULT_CONTEXT_KEYWORDS;
-    return keywordsCache;
+    // Return a deep clone to prevent mutation
+    return structuredClone(keywordsCache);
   } catch (error) {
     console.error("Error loading context keywords:", error);
     keywordsCache = DEFAULT_CONTEXT_KEYWORDS;
-    return keywordsCache;
+    // Return a deep clone to prevent mutation
+    return structuredClone(keywordsCache);
   }
 }
 
@@ -141,8 +144,8 @@ function calculateTFIDF(text: string, keywords: Record<string, Record<string, nu
         // TF: term frequency normalized by total words
         const tf = termFreq[keyword] / totalWords;
         
-        // IDF: inverse document frequency (simplified)
-        const idf = Math.log(1 / (1 + Math.exp(-tf)));
+        // IDF: a constant value for weight normalization
+        const idf = 1.5;
         
         categoryScore += tf * idf * weight;
         matchedTerms++;

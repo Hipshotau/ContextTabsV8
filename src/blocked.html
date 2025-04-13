@@ -59,7 +59,7 @@
               `${mins}:${secs.toString().padStart(2, '0')}`;
           } else {
             // Session ended, reload the page
-            window.location.reload();
+            window.location.href = "about:blank";
           }
         } else {
           document.getElementById("countdown").textContent = "--:--";

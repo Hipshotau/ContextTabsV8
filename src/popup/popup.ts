@@ -132,14 +132,11 @@ function setupEventListeners() {
     // Get duration (if any)
     const duration = durationInput.value ? parseInt(durationInput.value, 10) : undefined;
     
-    // Calculate blocked categories
-    const blockedCategories = AVAILABLE_CONTEXTS.filter(c => !allowedContexts.includes(c));
-    
-    // Start focus session with correct format
+    // Start focus session with allowed contexts directly
     chrome.runtime.sendMessage({
       type: 'START_FOCUS_SESSION',
       payload: {
-        blockedCategories: blockedCategories,
+        allowedContexts: allowedContexts,
         durationMinutes: duration
       }
     }, () => {
